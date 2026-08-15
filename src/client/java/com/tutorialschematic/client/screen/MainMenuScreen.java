@@ -407,16 +407,42 @@ public class MainMenuScreen extends Screen {
         graphics.text(font, "▲", iconsX + 4, centerY, index > 0 ? TEXT : 0xFF3A3F4B);
         graphics.text(font, "▼", iconsX + ICON + 4, centerY, index < layerCount - 1 ? TEXT : 0xFF3A3F4B);
 
-        // видимость рисуем квадратиком, а не символом: залит — виден, пустой — скрыт
-        int eyeX = iconsX + ICON * 2 + 3;
-        if (layer.visible()) {
-            graphics.fill(eyeX, rowY + 5, eyeX + 7, rowY + 12, 0xFFE6E8EC);
-        } else {
-            graphics.outline(eyeX, rowY + 5, 7, 7, 0xFF6A6F7B);
-        }
+        drawEye(graphics, iconsX + ICON * 2 + 2, rowY + 5, layer.visible());
 
         boolean confirming = pendingDeleteLayer == index;
         graphics.text(font, "✕", iconsX + ICON * 3 + 4, centerY, confirming ? DANGER : TEXT_DIM);
+    }
+
+    /**
+     * Глазик видимости слоя: открытый — слой подсвечивается в мире, перечёркнутый — скрыт.
+     *
+     * <p>Рисуется примитивами, а не символом шрифта: подходящего глифа в игровом шрифте нет,
+     * а иконка должна читаться с одного взгляда — при полусотне слоёв по ней кликают чаще
+     * всего остального.
+     *
+     * <p>Занимает 11×7 пикселей от левого верхнего угла {@code (x, y)}.
+     */
+    private void drawEye(GuiGraphicsExtractor graphics, int x, int y, boolean open) {
+        int color = open ? TEXT : HIDDEN;
+
+        // веко: верхняя и нижняя дуги, сходящиеся в уголках
+        graphics.fill(x + 3, y, x + 8, y + 1, color);
+        graphics.fill(x + 1, y + 1, x + 3, y + 2, color);
+        graphics.fill(x + 8, y + 1, x + 10, y + 2, color);
+        graphics.fill(x, y + 2, x + 1, y + 5, color);
+        graphics.fill(x + 10, y + 2, x + 11, y + 5, color);
+        graphics.fill(x + 1, y + 5, x + 3, y + 6, color);
+        graphics.fill(x + 8, y + 5, x + 10, y + 6, color);
+        graphics.fill(x + 3, y + 6, x + 8, y + 7, color);
+
+        if (open) {
+            graphics.fill(x + 4, y + 2, x + 7, y + 5, color);
+            return;
+        }
+        // скрытый слой перечёркиваем; зрачок при этом не рисуем, иначе косая с ним сливается
+        for (int row = 0; row < 7; row++) {
+            graphics.fill(x + 8 - row, y + row, x + 11 - row, y + row + 1, color);
+        }
     }
 
     private void drawSectionLabels(GuiGraphicsExtractor graphics) {
