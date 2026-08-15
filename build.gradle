@@ -14,25 +14,15 @@ loom {
     splitEnvironmentSourceSets()
 
     mods {
-        "untitled" {
+        "tutorialschematic" {
             sourceSet sourceSets.main
             sourceSet sourceSets.client
         }
     }
 }
 
-fabricApi {
-    configureDataGeneration {
-        client = true
-    }
-}
-
 repositories {
-    // Add repositories to retrieve artifacts from in here.
-    // You should only use this when depending on other mods because
-    // Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
-    // See https://docs.gradle.org/current/userguide/declaring_repositories.html
-    // for more information about repositories.
+    mavenCentral()
 }
 
 dependencies {
@@ -41,6 +31,22 @@ dependencies {
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    // Движок формул и сортировка блоков не зависят от Minecraft, поэтому проверяются
+    // обычными юнит-тестами: ./gradlew test
+    testImplementation platform("org.junit:junit-bom:5.11.4")
+    testImplementation "org.junit.jupiter:junit-jupiter"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+    // Minecraft поставляет Gson, но на тестовый classpath он не попадает — добавляем явно
+    testImplementation "com.google.code.gson:gson:2.11.0"
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    testLogging {
+        events "failed"
+        exceptionFormat "full"
+    }
 }
 
 processResources {

@@ -1,32 +1,24 @@
 {
   "schemaVersion": 1,
-  "id": "untitled",
+  "id": "tutorialschematic",
   "version": "${version}",
-  "name": "untitled",
-  "description": "",
-  "authors": [],
+  "name": "Tutorial Schematic",
+  "description": "Разметка построек по слоям и анимированная автопостройка для съёмки туториалов и таймлапсов.",
+  "authors": [
+    "Erkin"
+  ],
   "contact": {},
   "license": "All-Rights-Reserved",
-  "icon": "assets/untitled/icon.png",
   "environment": "client",
   "entrypoints": {
-    "fabric-datagen": [
-      "org.webtrade.untitled.client.UntitledDataGenerator"
-    ],
     "client": [
-      "org.webtrade.untitled.client.UntitledClient"
+      "com.tutorialschematic.client.TutorialSchematicClient"
     ],
     "main": [
-      "org.webtrade.untitled.Untitled"
+      "com.tutorialschematic.TutorialSchematicMod"
     ]
   },
-  "mixins": [
-    "untitled.mixins.json",
-    {
-      "config": "untitled.client.mixins.json",
-      "environment": "client"
-    }
-  ],
+  "mixins": [],
   "depends": {
     "fabricloader": ">=${loader_version}",
     "fabric-api": "*",
