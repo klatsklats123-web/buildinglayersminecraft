@@ -1,6 +1,7 @@
 package com.tutorialschematic.client.selection;
 
 import com.tutorialschematic.client.EditorState;
+import com.tutorialschematic.client.build.BuildRunner;
 import com.tutorialschematic.schematic.BlockData;
 import com.tutorialschematic.schematic.BuildLayer;
 import com.tutorialschematic.schematic.TutorialSchematic;
@@ -112,7 +113,7 @@ public final class SelectionTool {
 
     private static void applyAdd(EditorState state, BuildLayer layer, List<BlockPos> positions, Level level) {
         TutorialSchematic schematic = state.schematic();
-        int added = 0;
+        List<BlockPos> added = new ArrayList<>();
         int movedFromOtherLayer = 0;
 
         for (BlockPos pos : positions) {
@@ -130,11 +131,16 @@ public final class SelectionTool {
                 movedFromOtherLayer++;
             }
             if (layer.add(pos, data)) {
-                added++;
+                added.add(pos.immutable());
             }
         }
 
-        StringBuilder message = new StringBuilder("+" + added + " бл. → «" + layer.name() + "» (всего "
+        // состояния блоков уже сняты выше, так что мир можно чистить без потерь
+        if (state.autoClear() && !added.isEmpty()) {
+            BuildRunner.get().clearFromWorld(added);
+        }
+
+        StringBuilder message = new StringBuilder("+" + added.size() + " бл. → «" + layer.name() + "» (всего "
                 + layer.blockCount() + ")");
         if (movedFromOtherLayer > 0) {
             message.append(", перенесено из других слоёв: ").append(movedFromOtherLayer);
@@ -143,8 +149,21 @@ public final class SelectionTool {
     }
 
     private static void applyRemove(EditorState state, BuildLayer layer, List<BlockPos> positions) {
-        int removed = 0;
+        List<BlockPos> present = new ArrayList<>();
         for (BlockPos pos : positions) {
+            if (layer.contains(pos)) {
+                present.add(pos.immutable());
+            }
+        }
+
+        // При живом сносе блок возвращаем в мир до удаления из слоя: состояние хранится
+        // в самом слое, и после удаления восстанавливать было бы уже нечего.
+        if (state.autoClear() && !present.isEmpty()) {
+            BuildRunner.get().restoreToWorld(layer, present);
+        }
+
+        int removed = 0;
+        for (BlockPos pos : present) {
             if (layer.remove(pos)) {
                 removed++;
             }

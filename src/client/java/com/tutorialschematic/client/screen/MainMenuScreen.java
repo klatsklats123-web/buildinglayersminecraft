@@ -15,6 +15,7 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
+
 /**
  * Главное меню мода — всё управление в одном месте, без команд.
  *
@@ -207,6 +208,26 @@ public class MainMenuScreen extends Screen {
                         })
                 .bounds(x + halfWidth + 4, y, halfWidth, 18).build();
         addRenderableWidget(highlights);
+
+        y += 22;
+        Button autoClear = Button.builder(
+                        Component.literal(state.autoClear()
+                                ? "Живой снос: ВКЛ — размеченное исчезает"
+                                : "Живой снос: выкл"),
+                        b -> {
+                            BuildRunner.get().setAutoClear(!state.autoClear());
+                            rebuildWidgets();
+                        })
+                .bounds(x, y, fullWidth, 18)
+                .tooltip(Tooltip.create(Component.literal(
+                        "Размеченный блок сразу убирается из мира, так что под ним видно "
+                                + "следующий этап. ЛКМ возвращает блок обратно.\n\n"
+                                + "При включении сносится всё, что уже в активном слое; при "
+                                + "выключении все слои возвращаются в мир.\n\n"
+                                + "Работает только в одиночном мире.")))
+                .build();
+        autoClear.active = has;
+        addRenderableWidget(autoClear);
 
         // --- Анимация ---
         y += 34;
@@ -463,7 +484,7 @@ public class MainMenuScreen extends Screen {
             case FINISHED -> "завершена, поставлено " + runner.placedTotal();
         };
         graphics.text(font, status + " · скорость x" + String.format("%.1f", runner.speedMultiplier()),
-                x + font.width("Постройка") + 10, contentY + 190, TEXT_DIM);
+                x + font.width("Постройка") + 10, contentY + 198, TEXT_DIM);
     }
 
     private static String shorten(String text, int maxPixels) {

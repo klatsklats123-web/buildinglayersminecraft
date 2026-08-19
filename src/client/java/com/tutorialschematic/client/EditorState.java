@@ -43,6 +43,7 @@ public final class EditorState {
     private boolean markupEnabled;
     private boolean showOnlyActiveLayer;
     private boolean highlightsVisible = true;
+    private boolean autoClear;
 
     // ---- схема ----
 
@@ -86,6 +87,7 @@ public final class EditorState {
         this.fileName = null;
         this.boxCorner = null;
         this.markupEnabled = false;
+        this.autoClear = false;
     }
 
     /** Сохраняет открытую схему. Возвращает путь к файлу либо {@code null} при ошибке. */
@@ -181,6 +183,18 @@ public final class EditorState {
 
     public void setHighlightsVisible(boolean value) {
         this.highlightsVisible = value;
+    }
+
+    /**
+     * Живой снос: блок, попавший в слой, тут же убирается из мира, а вынутый обратно —
+     * возвращается. Так можно размечать дом насквозь, не снося его отдельным шагом.
+     */
+    public boolean autoClear() {
+        return autoClear;
+    }
+
+    public void setAutoClear(boolean value) {
+        this.autoClear = value;
     }
 
     /** Все блоки схемы — для быстрой проверки «этот блок уже размечен». */

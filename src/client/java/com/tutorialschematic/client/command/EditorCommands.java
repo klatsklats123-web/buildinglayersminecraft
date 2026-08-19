@@ -127,6 +127,11 @@ public final class EditorCommands {
                             state.setHighlightsVisible(!state.highlightsVisible());
                             EditorState.info("Подсветка: " + (state.highlightsVisible() ? "вкл" : "выкл"));
                             return 1;
+                        }))
+                .then(ClientCommands.literal("autoclear")
+                        .executes(ctx -> {
+                            BuildRunner.get().setAutoClear(!EditorState.get().autoClear());
+                            return 1;
                         }));
     }
 
