@@ -28,8 +28,8 @@ import java.util.Set;
  * дальше все режимы обрабатываются одинаково, поэтому отмена, защита от
  * дублирования между слоями и сообщения написаны один раз.
  *
- * <p>ЛКМ добавляет, ПКМ убирает. В режиме «Две точки» ЛКМ ставит первый угол,
- * а ПКМ — второй и сразу применяет получившуюся коробку.
+ * <p>ПКМ добавляет, ЛКМ убирает — как в самой игре. В режиме «Две точки» первый клик
+ * любой кнопкой только ставит угол, а что случится с коробкой, решает вторая кнопка.
  */
 public final class SelectionTool {
 
@@ -37,6 +37,12 @@ public final class SelectionTool {
     private static final int FLOOD_LIMIT = 16384;
     /** Потолок для области и радиусных режимов. */
     private static final int AREA_LIMIT = 65536;
+    /**
+     * Сколько позиций не жалко просканировать ради превью коробки. Считается каждый кадр,
+     * поэтому предел на порядок ниже, чем у самого выделения: коробку крупнее показываем
+     * одной рамкой, без поблочной заливки.
+     */
+    private static final int PREVIEW_LIMIT = 4096;
 
     private SelectionTool() {
     }
@@ -204,6 +210,14 @@ public final class SelectionTool {
 
     /** Все непустые блоки в коробке между двумя углами включительно. */
     private static List<BlockPos> boxBetween(Level level, BlockPos first, BlockPos second) {
+        return boxBetween(level, first, second, false);
+    }
+
+    /**
+     * То же, но {@code quiet} глушит сообщение о слишком большой области: превью считается
+     * каждый кадр, и жалоба в чат превратилась бы в поток по строке на кадр.
+     */
+    private static List<BlockPos> boxBetween(Level level, BlockPos first, BlockPos second, boolean quiet) {
         int minX = Math.min(first.getX(), second.getX());
         int minY = Math.min(first.getY(), second.getY());
         int minZ = Math.min(first.getZ(), second.getZ());
@@ -213,7 +227,9 @@ public final class SelectionTool {
 
         long volume = (long) (maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1);
         if (volume > AREA_LIMIT) {
-            EditorState.error("Область слишком большая: " + volume + " позиций (предел " + AREA_LIMIT + ")");
+            if (!quiet) {
+                EditorState.error("Область слишком большая: " + volume + " позиций (предел " + AREA_LIMIT + ")");
+            }
             return List.of();
         }
 
@@ -233,9 +249,27 @@ public final class SelectionTool {
 
     /**
      * Позиции, которые будут затронуты кликом прямо сейчас — для подсветки под прицелом.
-     * Заливку каждый кадр считать слишком дорого, поэтому везде подсвечивается сам блок.
+     *
+     * <p>В режиме «Две точки» после первого угла показывается вся коробка целиком: иначе
+     * не видно, что именно заберёт второй клик, и в слой стабильно попадает лишнее —
+     * коробка захватывает всё непустое в объёме, включая землю под постройкой.
+     *
+     * <p>Заливку каждый кадр считать слишком дорого, для неё подсвечивается сам блок.
      */
     public static Set<BlockPos> previewPositions(Level level, BlockPos target) {
+        EditorState state = EditorState.get();
+        BlockPos corner = state.boxCorner();
+        if (state.mode() == SelectionMode.TWO_POINTS && corner != null
+                && volume(corner, target) <= PREVIEW_LIMIT) {
+            return new LinkedHashSet<>(boxBetween(level, corner, target, true));
+        }
         return new HashSet<>(Set.of(target));
+    }
+
+    /** Сколько позиций в коробке между двумя углами включительно. */
+    private static long volume(BlockPos first, BlockPos second) {
+        return (long) (Math.abs(first.getX() - second.getX()) + 1)
+                * (Math.abs(first.getY() - second.getY()) + 1)
+                * (Math.abs(first.getZ() - second.getZ()) + 1);
     }
 }

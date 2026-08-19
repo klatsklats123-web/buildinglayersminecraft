@@ -65,7 +65,11 @@ public class TutorialSchematicClient implements ClientModInitializer {
             }
             BlockPos target = lookedAtBlock(client);
             if (target != null) {
-                boolean pressed = clickCount == 0;
+                // clickCount — число свежих нажатий за тик: при простом удержании он равен
+                // нулю. Событие приходит каждый тик, пока кнопка зажата, поэтому отличать
+                // клик от удержания обязательно — иначе обработчик стреляет двадцать раз
+                // в секунду и в режиме двух точек угол переставляется сам собой.
+                boolean pressed = clickCount != 0;
                 // при удержании обрабатываем каждый новый блок под прицелом — так лишнее
                 // можно стирать протяжкой, как кистью
                 boolean movedToNewBlock = !target.equals(lastPaintPos);

@@ -17,6 +17,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -113,6 +114,11 @@ public final class WorldHighlightRenderer {
         // блоки, которые захватит клик прямо сейчас — ярче остального
         for (BlockPos pos : cursor) {
             emitBlockFaces(pose, consumer, pos, 0xFFFFFF, CURSOR_ALPHA);
+        }
+        // рамку вокруг блока рисуем только когда он один: у коробки из сотен блоков
+        // двенадцать рёбер на каждый — это десятки тысяч лишних граней за кадр
+        if (cursor.size() == 1) {
+            BlockPos pos = cursor.iterator().next();
             emitBoxOutline(pose, consumer, pos.getX(), pos.getY(), pos.getZ(),
                     pos.getX(), pos.getY(), pos.getZ(), 0xFFFFFF, 220);
         }
@@ -131,11 +137,23 @@ public final class WorldHighlightRenderer {
             emitBoxOutline(pose, consumer, all[0], all[1], all[2], all[3], all[4], all[5], 0xFFFFFF, 110);
         }
 
-        // первый угол режима «Область» — иначе непонятно, откуда тянется прямоугольник
+        // Режим «Две точки»: тянем зелёную рамку от первого угла к прицелу. Без неё
+        // масштаб будущего выделения виден только после того, как второй клик его
+        // применил, — а коробка забирает всё непустое в объёме, включая землю под домом.
         BlockPos corner = state.boxCorner();
         if (corner != null) {
-            emitBoxOutline(pose, consumer, corner.getX(), corner.getY(), corner.getZ(),
-                    corner.getX(), corner.getY(), corner.getZ(), 0x00FF00, 255);
+            BlockPos to = lookedAtBlock();
+            if (to == null) {
+                to = corner;
+            }
+            emitBoxOutline(pose, consumer,
+                    Math.min(corner.getX(), to.getX()),
+                    Math.min(corner.getY(), to.getY()),
+                    Math.min(corner.getZ(), to.getZ()),
+                    Math.max(corner.getX(), to.getX()),
+                    Math.max(corner.getY(), to.getY()),
+                    Math.max(corner.getZ(), to.getZ()),
+                    0x00FF00, 255);
         }
     }
 
@@ -163,6 +181,16 @@ public final class WorldHighlightRenderer {
         }
         Set<BlockPos> positions = SelectionTool.previewPositions(client.level, blockHit.getBlockPos());
         return positions.size() > 4096 ? new HashSet<>(Set.of(blockHit.getBlockPos())) : positions;
+    }
+
+    /** Блок под прицелом либо {@code null}, если игрок смотрит в пустоту. */
+    @Nullable
+    private static BlockPos lookedAtBlock() {
+        HitResult hit = Minecraft.getInstance().hitResult;
+        if (hit instanceof BlockHitResult blockHit && hit.getType() == HitResult.Type.BLOCK) {
+            return blockHit.getBlockPos();
+        }
+        return null;
     }
 
     // ---- геометрия ----
