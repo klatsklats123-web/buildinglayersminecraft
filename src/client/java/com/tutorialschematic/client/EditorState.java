@@ -222,16 +222,27 @@ public final class EditorState {
 
     /** Короткое сообщение над хотбаром — не засоряет чат при частых действиях. */
     public static void actionBar(String text) {
-        Minecraft client = Minecraft.getInstance();
-        if (client.player != null) {
-            client.player.sendOverlayMessage(Component.literal(text).withStyle(ChatFormatting.YELLOW));
-        }
+        onClientThread(client ->
+                client.player.sendOverlayMessage(Component.literal(text).withStyle(ChatFormatting.YELLOW)));
     }
 
     private static void send(Component component) {
+        onClientThread(client -> client.player.sendSystemMessage(component));
+    }
+
+    /**
+     * Выполняет действие на клиентском потоке.
+     *
+     * <p>Постройка идёт на потоке сервера, а чат и строка над хотбаром — клиентские:
+     * трогать их напрямую оттуда нельзя. {@code execute} со своего же потока выполняет
+     * задачу сразу, поэтому обычные вызовы из меню ничего не теряют в отзывчивости.
+     */
+    private static void onClientThread(java.util.function.Consumer<Minecraft> action) {
         Minecraft client = Minecraft.getInstance();
-        if (client.player != null) {
-            client.player.sendSystemMessage(component);
-        }
+        client.execute(() -> {
+            if (client.player != null) {
+                action.accept(client);
+            }
+        });
     }
 }
