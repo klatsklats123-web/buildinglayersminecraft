@@ -27,6 +27,15 @@ public final class BlockOrderer {
             .thenComparingInt(Pos::z);
 
     public static List<Pos> order(Collection<Pos> blocks, OrderConfig config) {
+        return order(blocks, config, List.of());
+    }
+
+    /**
+     * То же, но с точками старта для переменной {@code d} — расстояния по самой постройке.
+     *
+     * @param seeds блоки, от которых пойдёт обход; пустой список означает «снизу»
+     */
+    public static List<Pos> order(Collection<Pos> blocks, OrderConfig config, List<Pos> seeds) {
         List<Pos> list = new ArrayList<>(blocks);
         if (list.size() <= 1) {
             return list;
@@ -60,6 +69,9 @@ public final class BlockOrderer {
             maxZ = Math.max(maxZ, p.z());
         }
 
+        // расстояние по постройке считаем один раз на слой: обход в ширину по всем блокам
+        double[] structureDistance = StructureDistance.compute(list, seeds);
+
         EvalContext ctx = new EvalContext();
         ctx.setSeed(config.seed());
         ctx.setBounds(minX, minY, minZ, maxX - minX + 1, maxY - minY + 1, maxZ - minZ + 1, n);
@@ -67,6 +79,7 @@ public final class BlockOrderer {
         double[] keys = new double[n * depth];
         for (int i = 0; i < n; i++) {
             Pos p = list.get(i);
+            ctx.setStructureDistance(structureDistance[i]);
             ctx.setBlock(p.x() - minX, p.y() - minY, p.z() - minZ, i);
             for (int k = 0; k < depth; k++) {
                 double value;

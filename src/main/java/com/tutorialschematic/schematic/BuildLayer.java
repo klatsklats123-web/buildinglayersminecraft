@@ -42,6 +42,11 @@ public class BuildLayer {
      * сущности — в сетке блоков их попросту нет.
      */
     private final Map<UUID, EntityData> entities = new LinkedHashMap<>();
+    /**
+     * Точки старта для переменной {@code d} — расстояния по постройке. Пустой список
+     * означает «начать с самого нижнего блока», чтобы величина работала без настройки.
+     */
+    private final List<BlockPos> seeds = new ArrayList<>();
     private OrderConfig order = OrderPresets.defaultConfig();
 
     /** Пауза после завершения слоя в тиках — даёт время на смену ракурса при съёмке. */
@@ -150,6 +155,7 @@ public class BuildLayer {
     public void clear() {
         blocks.clear();
         entities.clear();
+        seeds.clear();
         invalidateOrder();
     }
 
@@ -191,6 +197,36 @@ public class BuildLayer {
         return removed;
     }
 
+    // ---- точки старта ----
+
+    public List<BlockPos> seeds() {
+        return Collections.unmodifiableList(seeds);
+    }
+
+    public boolean isSeed(BlockPos pos) {
+        return seeds.contains(pos);
+    }
+
+    /** Ставит или снимает точку старта. @return {@code true}, если точка теперь стоит */
+    public boolean toggleSeed(BlockPos pos) {
+        BlockPos immutable = pos.immutable();
+        boolean added = !seeds.remove(immutable) && seeds.add(immutable);
+        invalidateOrder();
+        return added;
+    }
+
+    public void clearSeeds() {
+        if (!seeds.isEmpty()) {
+            seeds.clear();
+            invalidateOrder();
+        }
+    }
+
+    /** Для загрузки из файла — без сброса кэша, слой ещё собирается. */
+    public void addSeedRaw(BlockPos pos) {
+        seeds.add(pos.immutable());
+    }
+
     /** Сбрасывает кэш очереди. Вызывать после правки блоков или формул. */
     public void invalidateOrder() {
         cachedOrder = null;
@@ -219,7 +255,11 @@ public class BuildLayer {
         for (BlockPos pos : blocks.keySet()) {
             source.add(new Pos(pos.getX(), pos.getY(), pos.getZ()));
         }
-        List<Pos> ordered = BlockOrderer.order(source, order);
+        List<Pos> seedPositions = new ArrayList<>(seeds.size());
+        for (BlockPos pos : seeds) {
+            seedPositions.add(new Pos(pos.getX(), pos.getY(), pos.getZ()));
+        }
+        List<Pos> ordered = BlockOrderer.order(source, order, seedPositions);
         cachedOrder = ordered;
         return ordered;
     }

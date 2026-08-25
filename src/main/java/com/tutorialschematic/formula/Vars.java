@@ -18,6 +18,7 @@ public final class Vars {
     public static final int R = 12, R3 = 13, A = 14;
     public static final int RAND = 15, INDEX = 16, COUNT = 17;
     public static final int WX = 18, WY = 19, WZ = 20;
+    public static final int DIST = 21;
 
     /** Имя переменной, её id и текст для справки в редакторе. */
     public record Def(String name, int id, String help) {
@@ -63,6 +64,9 @@ public final class Vars {
         def("wx", WX, "абсолютная координата в мире по x");
         def("wy", WY, "абсолютная координата в мире по y");
         def("wz", WZ, "абсолютная координата в мире по z");
+
+        def("d", DIST, "расстояние по самой постройке от точки старта, шагами — "
+                + "обтекает пустоту, в отличие от r");
     }
 
     public static Def get(String name) {
@@ -102,6 +106,7 @@ public final class Vars {
             case WX -> c.wx;
             case WY -> c.wy;
             case WZ -> c.wz;
+            case DIST -> c.d;
             default -> 0;
         };
     }

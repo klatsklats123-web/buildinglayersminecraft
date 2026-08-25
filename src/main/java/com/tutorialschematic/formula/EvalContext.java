@@ -29,6 +29,11 @@ public final class EvalContext {
     public double index, count;
     /** Абсолютные координаты блока в мире. */
     public double wx, wy, wz;
+    /**
+     * Расстояние до блока по самой постройке, шагами от затравки. В отличие от {@code r}
+     * обтекает пустоту: сквозь дырку пути нет, значит фронт идёт вокруг.
+     */
+    public double d;
 
     /** Смещение слоя в мире — прибавляется к x/y/z, чтобы получить wx/wy/wz. */
     private int originX, originY, originZ;
@@ -58,6 +63,11 @@ public final class EvalContext {
         this.cy = (this.sizeY - 1) / 2.0;
         this.cz = (this.sizeZ - 1) / 2.0;
         this.count = blockCount;
+    }
+
+    /** Расстояние по постройке для текущего блока. Считается снаружи, обходом в ширину. */
+    public void setStructureDistance(double distance) {
+        this.d = distance;
     }
 
     /** Задаёт текущий блок. bx/by/bz — координаты внутри слоя, от 0. */

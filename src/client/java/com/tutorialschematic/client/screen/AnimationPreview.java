@@ -1,8 +1,12 @@
 package com.tutorialschematic.client.screen;
 
+import com.tutorialschematic.client.EditorState;
 import com.tutorialschematic.order.Pos;
 import com.tutorialschematic.schematic.BuildLayer;
+import com.tutorialschematic.schematic.BlockData;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.core.BlockPos;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -46,7 +50,7 @@ public final class AnimationPreview {
     private float cachedYaw = Float.NaN, cachedPitch = Float.NaN, cachedZoom = Float.NaN;
     private boolean dirty = true;
 
-    private record Projected(float sx, float sy, float depth, int step, float shade) {
+    private record Projected(float sx, float sy, float depth, int step, float shade, Pos pos, int color) {
     }
 
     public void setBounds(int x, int y, int width, int height) {
@@ -161,6 +165,44 @@ public final class AnimationPreview {
         return mouseX >= x && mouseX < x + width && mouseY >= y && mouseY < y + height;
     }
 
+    /**
+     * Блок под курсором — ближний к камере из тех, на чей квадрат попал курсор.
+     * Перебор идёт с конца, потому что список отсортирован от дальних к ближним.
+     */
+    @org.jetbrains.annotations.Nullable
+    public BlockPos blockAt(double mouseX, double mouseY) {
+        int size = blockSize();
+        for (int i = projected.size() - 1; i >= 0; i--) {
+            Projected block = projected.get(i);
+            if (mouseX >= block.sx() && mouseX < block.sx() + size
+                    && mouseY >= block.sy() && mouseY < block.sy() + size) {
+                Pos pos = block.pos();
+                return new BlockPos(pos.x(), pos.y(), pos.z());
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Ставит или снимает точку старта под курсором.
+     *
+     * @return {@code true}, если по курсору вообще был блок
+     */
+    public boolean toggleSeedAt(double mouseX, double mouseY) {
+        if (layer == null) {
+            return false;
+        }
+        BlockPos pos = blockAt(mouseX, mouseY);
+        if (pos == null) {
+            return false;
+        }
+        boolean added = layer.toggleSeed(pos);
+        EditorState.actionBar(added
+                ? "Старт: " + pos.getX() + " " + pos.getY() + " " + pos.getZ()
+                : "Точка старта снята");
+        return true;
+    }
+
     // ---- отрисовка ----
 
     public void render(GuiGraphicsExtractor graphics) {
@@ -176,31 +218,33 @@ public final class AnimationPreview {
 
         graphics.enableScissor(x + 1, y + 1, x + width - 1, y + height - 1);
 
-        int color = layer == null ? 0x88AAFF : layer.color();
         int size = blockSize();
 
         for (Projected block : projected) {
             boolean placed = block.step() <= currentStep;
             boolean fresh = placed && block.step() > currentStep - FLASH_STEPS;
-
-            int fill;
-            if (fresh) {
-                fill = 0xFFFFFFFF;
-            } else if (placed) {
-                fill = 0xFF000000 | shade(color, block.shade());
-            } else {
-                // призрак: тускло, чтобы был виден силуэт, но не спорил с построенным
-                fill = 0x33000000 | shade(color, block.shade() * 0.5f);
-            }
+            int color = block.color();
 
             int px = (int) block.sx();
             int py = (int) block.sy();
-            graphics.fill(px, py, px + size, py + size, fill);
-            if (size >= 3 && placed) {
-                // светлая верхняя грань добавляет объём почти бесплатно
-                graphics.fill(px, py, px + size, py + 1, 0xFF000000 | shade(color, Math.min(1f, block.shade() * 1.6f)));
+
+            if (!placed) {
+                // призрак: тускло, чтобы был виден силуэт, но не спорил с построенным
+                graphics.fill(px, py, px + size, py + size,
+                        0x33000000 | shade(color, block.shade() * 0.5f));
+                continue;
             }
+            if (fresh) {
+                graphics.fill(px, py, px + size, py + size, 0xFFFFFFFF);
+                continue;
+            }
+
+            // Кубик тремя гранями: верх светлее, бок темнее. Объём читается без вращения,
+            // а стоит это двух лишних прямоугольников на блок.
+            drawCube(graphics, px, py, size, color, block.shade());
         }
+
+        drawSeedMarkers(graphics, size);
 
         graphics.disableScissor();
     }
@@ -277,11 +321,82 @@ public final class AnimationPreview {
             shade = Math.max(0.3f, Math.min(1.2f, shade));
 
             projected.add(new Projected((float) screenX, (float) screenY, (float) depth,
-                    i < stepOfBlock.length ? stepOfBlock[i] : 0, shade));
+                    i < stepOfBlock.length ? stepOfBlock[i] : 0, shade, pos, colorOf(pos)));
         }
 
         // дальние рисуем первыми, ближние поверх
         projected.sort((a, b) -> Float.compare(a.depth(), b.depth()));
+    }
+
+    /**
+     * Кубик из трёх граней. Настоящие модели блоков сюда не годятся: превью держит до
+     * двенадцати тысяч блоков и перерисовывается каждый кадр, а прямоугольник стоит
+     * почти ничего.
+     */
+    private void drawCube(GuiGraphicsExtractor graphics, int px, int py, int size, int color, float shade) {
+        int side = 0xFF000000 | shade(color, shade * 0.72f);
+        int front = 0xFF000000 | shade(color, shade);
+        int top = 0xFF000000 | shade(color, Math.min(1.4f, shade * 1.35f));
+
+        graphics.fill(px, py, px + size, py + size, front);
+        if (size < 3) {
+            return;
+        }
+        int cap = Math.max(1, size / 3);
+        graphics.fill(px, py, px + size, py + cap, top);
+        graphics.fill(px + size - cap, py, px + size, py + size, side);
+    }
+
+    /** Точки старта: яркое кольцо и номер, чтобы их было видно на цветном превью. */
+    private void drawSeedMarkers(GuiGraphicsExtractor graphics, int size) {
+        if (layer == null || layer.seeds().isEmpty()) {
+            return;
+        }
+        int number = 1;
+        for (BlockPos seed : layer.seeds()) {
+            Projected found = null;
+            for (Projected block : projected) {
+                if (block.pos().x() == seed.getX() && block.pos().y() == seed.getY()
+                        && block.pos().z() == seed.getZ()) {
+                    found = block;
+                }
+            }
+            if (found == null) {
+                continue;
+            }
+            int px = (int) found.sx();
+            int py = (int) found.sy();
+            int ring = Math.max(size + 4, 7);
+            int rx = px + size / 2 - ring / 2;
+            int ry = py + size / 2 - ring / 2;
+            graphics.outline(rx, ry, ring, ring, 0xFF00E5FF);
+            graphics.outline(rx - 1, ry - 1, ring + 2, ring + 2, 0xAA003844);
+            graphics.text(Minecraft.getInstance().font, String.valueOf(number),
+                    rx + ring + 2, ry, 0xFF00E5FF);
+            number++;
+        }
+    }
+
+    /**
+     * Цвет блока — тот же, каким он выглядит на карте. Дубовые доски коричневые, камень
+     * серый, листва зелёная: превью читается как сама постройка, а не как цветная каша.
+     */
+    private int colorOf(Pos pos) {
+        if (layer == null) {
+            return 0x88AAFF;
+        }
+        BlockData data = layer.get(new BlockPos(pos.x(), pos.y(), pos.z()));
+        if (data == null) {
+            return layer.color();
+        }
+        try {
+            // у части блоков цвет на карте зависит от мира, а в превью мира нет —
+            // такие просто откатываются на цвет слоя, это лучше, чем уронить кадр
+            int color = data.state().getMapColor(null, null).col;
+            return color == 0 ? layer.color() : color;
+        } catch (RuntimeException e) {
+            return layer.color();
+        }
     }
 
     private static int shade(int rgb, float factor) {

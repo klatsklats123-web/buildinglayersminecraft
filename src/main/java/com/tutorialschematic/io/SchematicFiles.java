@@ -182,6 +182,16 @@ public final class SchematicFiles {
                 }
                 layerJson.add("entities", entitiesJson);
             }
+
+            if (!layer.seeds().isEmpty()) {
+                JsonArray seedsJson = new JsonArray();
+                for (BlockPos pos : layer.seeds()) {
+                    seedsJson.add(pos.getX() - origin.getX());
+                    seedsJson.add(pos.getY() - origin.getY());
+                    seedsJson.add(pos.getZ() - origin.getZ());
+                }
+                layerJson.add("seeds", seedsJson);
+            }
             layersJson.add(layerJson);
         }
 
@@ -303,6 +313,16 @@ public final class SchematicFiles {
                         // одна сломанная декорация не должна ронять загрузку всей схемы
                         TutorialSchematicMod.LOGGER.warn("Не удалось прочитать декорацию: {}", e.getMessage());
                     }
+                }
+            }
+
+            if (layerJson.has("seeds")) {
+                JsonArray seedsJson = layerJson.getAsJsonArray("seeds");
+                for (int i = 0; i + 2 < seedsJson.size(); i += 3) {
+                    layer.addSeedRaw(origin.offset(
+                            seedsJson.get(i).getAsInt(),
+                            seedsJson.get(i + 1).getAsInt(),
+                            seedsJson.get(i + 2).getAsInt()));
                 }
             }
 

@@ -409,7 +409,18 @@ public class AnimationEditorScreen extends Screen {
         double mouseY = event.y();
 
         if (preview.isMouseOver(mouseX, mouseY)) {
-            draggingPreview = true;
+            // Правая ставит и снимает точку старта, левая только крутит. Разделение
+            // жёсткое и без порогов: крутить приходится постоянно, а точка старта задаёт
+            // всю анимацию — она не должна сдвигаться от случайного движения мышью.
+            // Кнопки те же, что и в мире: ПКМ назначает, и здесь тоже.
+            if (event.button() == 1) {
+                if (preview.toggleSeedAt(mouseX, mouseY)) {
+                    // порядок зависит от точек старта — очередь пересчитывается
+                    preview.setLayer(layer);
+                }
+            } else {
+                draggingPreview = true;
+            }
             return true;
         }
 
