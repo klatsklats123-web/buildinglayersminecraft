@@ -7,6 +7,7 @@ import com.tutorialschematic.client.EditorState;
 import com.tutorialschematic.client.selection.SelectionTool;
 import com.tutorialschematic.client.selection.SelectionWand;
 import com.tutorialschematic.schematic.BuildLayer;
+import com.tutorialschematic.schematic.EntityData;
 import com.tutorialschematic.schematic.TutorialSchematic;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
@@ -108,6 +109,13 @@ public final class WorldHighlightRenderer {
                     break;
                 }
                 emitOuterFaces(pose, consumer, pos, positions, color, FILL_ALPHA);
+            }
+            // декорации подсвечиваем рамкой по их клетке: у картины и рамки своя форма,
+            // а рамка в цвет слоя сразу говорит, что декорация в схеме учтена
+            for (EntityData data : layer.entities().values()) {
+                BlockPos pos = data.blockPos();
+                emitBoxOutline(pose, consumer, pos.getX(), pos.getY(), pos.getZ(),
+                        pos.getX(), pos.getY(), pos.getZ(), color, 200);
             }
         }
 

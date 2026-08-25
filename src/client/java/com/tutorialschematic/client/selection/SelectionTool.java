@@ -3,15 +3,18 @@ package com.tutorialschematic.client.selection;
 import com.tutorialschematic.client.EditorState;
 import com.tutorialschematic.client.build.BuildRunner;
 import com.tutorialschematic.schematic.BlockData;
+import com.tutorialschematic.schematic.EntityData;
 import com.tutorialschematic.schematic.BuildLayer;
 import com.tutorialschematic.schematic.TutorialSchematic;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
@@ -84,6 +87,7 @@ public final class SelectionTool {
                 return true;
             }
             positions = boxBetween(level, first, target);
+            applyEntitiesInBox(state, layer, level, first, target, removing);
             state.setBoxCorner(null);
         } else {
             positions = collect(state, level, target);
@@ -92,6 +96,46 @@ public final class SelectionTool {
         if (positions.isEmpty()) {
             EditorState.actionBar("Подходящих блоков не нашлось");
             return true;
+        }
+
+        if (removing) {
+            applyRemove(state, layer, positions);
+        } else {
+            applyAdd(state, layer, positions, level);
+        }
+        return true;
+    }
+
+    /**
+     * Выделяет коробку между двумя произвольными точками — вход для команд
+     * {@code /lpos1} и {@code /lpos2}.
+     *
+     * <p>Нужно потому, что углы по клику можно ставить только на существующий блок:
+     * если угол приходится на пустоту, прицелиться не во что. Команда задаёт его
+     * координатами, а внутрь коробки, как и всегда, попадают только непустые блоки.
+     *
+     * @return {@code true}, если что-то изменилось
+     */
+    public static boolean applyBox(BlockPos first, BlockPos second, boolean removing) {
+        EditorState state = EditorState.get();
+        Level level = Minecraft.getInstance().level;
+
+        if (level == null || !state.hasSchematic()) {
+            EditorState.error("Нет открытой схемы");
+            return false;
+        }
+        BuildLayer layer = state.activeLayer();
+        if (layer == null) {
+            EditorState.error("Сначала создайте слой: /layer new Название");
+            return false;
+        }
+
+        applyEntitiesInBox(state, layer, level, first, second, removing);
+
+        List<BlockPos> positions = boxBetween(level, first, second);
+        if (positions.isEmpty()) {
+            EditorState.actionBar("В коробке нет блоков — там только воздух");
+            return false;
         }
 
         if (removing) {
@@ -170,6 +214,109 @@ public final class SelectionTool {
         }
         EditorState.actionBar("−" + removed + " бл. из «" + layer.name() + "» (осталось "
                 + layer.blockCount() + ")");
+    }
+
+    // ---- декорации ----
+
+    /**
+     * Клик инструментом по сущности. Приходит из отдельных событий: картина и рамка —
+     * не блоки, и обычный клик по блоку до них не доходит.
+     *
+     * @return {@code true}, если клик обработан редактором
+     */
+    public static boolean handleEntityClick(Entity entity, boolean removing) {
+        EditorState state = EditorState.get();
+        if (!state.markupEnabled() || !state.hasSchematic()) {
+            return false;
+        }
+        BuildLayer layer = state.activeLayer();
+        if (layer == null) {
+            EditorState.error("Сначала создайте слой: G → + Новый слой");
+            return true;
+        }
+        if (!DecorationCapture.isDecoration(entity)) {
+            EditorState.actionBar("В схему берутся только картины, рамки, стенды и дисплеи");
+            return true;
+        }
+
+        if (removing) {
+            if (removeDecoration(layer, entity)) {
+                EditorState.actionBar("− " + shortName(entity) + " из «" + layer.name() + "»");
+            } else {
+                EditorState.actionBar(shortName(entity) + " в этом слое не числится");
+            }
+        } else if (addDecoration(state, layer, entity)) {
+            EditorState.actionBar("+ " + shortName(entity) + " → «" + layer.name() + "» (декораций "
+                    + layer.entityCount() + ")");
+        }
+        return true;
+    }
+
+    /**
+     * Декорации внутри коробки. Отдельным проходом по сущностям, потому что в сетке
+     * блоков их нет — коробка их просто не заметила бы.
+     */
+    private static void applyEntitiesInBox(EditorState state, BuildLayer layer, Level level,
+                                           BlockPos first, BlockPos second, boolean removing) {
+        AABB box = new AABB(
+                Math.min(first.getX(), second.getX()),
+                Math.min(first.getY(), second.getY()),
+                Math.min(first.getZ(), second.getZ()),
+                Math.max(first.getX(), second.getX()) + 1.0,
+                Math.max(first.getY(), second.getY()) + 1.0,
+                Math.max(first.getZ(), second.getZ()) + 1.0);
+
+        int changed = 0;
+        for (Entity entity : level.getEntities((Entity) null, box, DecorationCapture::isDecoration)) {
+            boolean done = removing ? removeDecoration(layer, entity) : addDecoration(state, layer, entity);
+            if (done) {
+                changed++;
+            }
+        }
+        // отдельным сообщением в чат, а не над хотбаром: там уже висит счёт блоков
+        if (changed > 0) {
+            EditorState.info((removing ? "Убрано декораций: " : "Добавлено декораций: ") + changed
+                    + " (в слое «" + layer.name() + "» их " + layer.entityCount() + ")");
+        }
+    }
+
+    private static boolean addDecoration(EditorState state, BuildLayer layer, Entity entity) {
+        EntityData data = DecorationCapture.capture(entity);
+        if (data == null) {
+            return false;
+        }
+        BuildLayer owner = state.schematic().layerContainingEntity(data.id());
+        if (owner == layer) {
+            return false;
+        }
+        if (owner != null) {
+            // как и блок, декорация живёт ровно в одном слое — иначе появится дважды
+            owner.removeEntity(data.id());
+        }
+        if (!layer.addEntity(data)) {
+            return false;
+        }
+        if (state.autoClear()) {
+            BuildRunner.get().removeDecorationFromWorld(data.id());
+        }
+        return true;
+    }
+
+    private static boolean removeDecoration(BuildLayer layer, Entity entity) {
+        // при живом сносе декорацию возвращаем в мир до удаления из слоя: запись с её
+        // данными хранится в слое, и после удаления восстанавливать было бы нечего
+        EntityData data = layer.getEntity(entity.getUUID());
+        if (data == null) {
+            return false;
+        }
+        if (EditorState.get().autoClear()) {
+            BuildRunner.get().restoreDecorationToWorld(data);
+        }
+        return layer.removeEntity(data.id());
+    }
+
+    private static String shortName(Entity entity) {
+        return entity.getType().getDescription().getString();
     }
 
     /** Снимает состояние блока вместе с данными контейнера. Воздух пропускается. */

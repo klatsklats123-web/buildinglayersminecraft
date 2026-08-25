@@ -9,8 +9,10 @@ import net.minecraft.core.BlockPos;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Один этап постройки: стена, крыша, интерьер и так далее.
@@ -35,6 +37,11 @@ public class BuildLayer {
     private int color;
 
     private final Map<BlockPos, BlockData> blocks = new LinkedHashMap<>();
+    /**
+     * Декорации слоя: картины, рамки, стенды. Отдельно от блоков, потому что это
+     * сущности — в сетке блоков их попросту нет.
+     */
+    private final Map<UUID, EntityData> entities = new LinkedHashMap<>();
     private OrderConfig order = OrderPresets.defaultConfig();
 
     /** Пауза после завершения слоя в тиках — даёт время на смену ракурса при съёмке. */
@@ -111,7 +118,7 @@ public class BuildLayer {
     }
 
     public boolean isEmpty() {
-        return blocks.isEmpty();
+        return blocks.isEmpty() && entities.isEmpty();
     }
 
     public boolean contains(BlockPos pos) {
@@ -142,10 +149,47 @@ public class BuildLayer {
 
     public void clear() {
         blocks.clear();
+        entities.clear();
         invalidateOrder();
     }
 
     // ---- очередь постройки ----
+
+    // ---- декорации ----
+
+    public Map<UUID, EntityData> entities() {
+        return Collections.unmodifiableMap(entities);
+    }
+
+    public int entityCount() {
+        return entities.size();
+    }
+
+    public boolean containsEntity(UUID id) {
+        return entities.containsKey(id);
+    }
+
+    public EntityData getEntity(UUID id) {
+        return entities.get(id);
+    }
+
+    /** @return {@code true}, если такой декорации в слое ещё не было */
+    public boolean addEntity(EntityData data) {
+        boolean added = entities.put(data.id(), data) == null;
+        if (added) {
+            invalidateOrder();
+        }
+        return added;
+    }
+
+    /** @return {@code true}, если декорация действительно была в слое */
+    public boolean removeEntity(UUID id) {
+        boolean removed = entities.remove(id) != null;
+        if (removed) {
+            invalidateOrder();
+        }
+        return removed;
+    }
 
     /** Сбрасывает кэш очереди. Вызывать после правки блоков или формул. */
     public void invalidateOrder() {
@@ -195,12 +239,23 @@ public class BuildLayer {
 
     /** Габариты слоя: {@code [minX, minY, minZ, maxX, maxY, maxZ]}, либо {@code null} для пустого слоя. */
     public int[] bounds() {
-        if (blocks.isEmpty()) {
+        if (isEmpty()) {
             return null;
         }
         int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
         int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
         for (BlockPos pos : blocks.keySet()) {
+            minX = Math.min(minX, pos.getX());
+            minY = Math.min(minY, pos.getY());
+            minZ = Math.min(minZ, pos.getZ());
+            maxX = Math.max(maxX, pos.getX());
+            maxY = Math.max(maxY, pos.getY());
+            maxZ = Math.max(maxZ, pos.getZ());
+        }
+        // декорации тоже расширяют коробку слоя: иначе формулы считали бы размеры
+        // по одним блокам, а картина торчала бы за границей
+        for (EntityData data : entities.values()) {
+            BlockPos pos = data.blockPos();
             minX = Math.min(minX, pos.getX());
             minY = Math.min(minY, pos.getY());
             minZ = Math.min(minZ, pos.getZ());

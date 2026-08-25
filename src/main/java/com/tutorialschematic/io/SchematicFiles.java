@@ -10,10 +10,12 @@ import com.tutorialschematic.TutorialSchematicMod;
 import com.tutorialschematic.order.OrderConfig;
 import com.tutorialschematic.schematic.BlockData;
 import com.tutorialschematic.schematic.BuildLayer;
+import com.tutorialschematic.schematic.EntityData;
 import com.tutorialschematic.schematic.TutorialSchematic;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtUtils;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.io.IOException;
@@ -29,6 +31,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Чтение и запись файлов {@code .ltutorial}.
@@ -45,7 +48,7 @@ public final class SchematicFiles {
 
     public static final String EXTENSION = ".ltutorial";
     /** Версия формата. Повышать при несовместимых изменениях. */
-    public static final int FORMAT_VERSION = 2;
+    public static final int FORMAT_VERSION = 3;
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
@@ -162,6 +165,23 @@ public final class SchematicFiles {
             if (!nbtJson.isEmpty()) {
                 layerJson.add("nbt", nbtJson);
             }
+
+            // декорации: картины и рамки не лежат в сетке блоков, поэтому пишутся отдельно
+            // и с дробными координатами — округление сдвинуло бы их на полблока
+            if (layer.entityCount() > 0) {
+                JsonArray entitiesJson = new JsonArray();
+                for (EntityData data : layer.entities().values()) {
+                    JsonObject entityJson = new JsonObject();
+                    entityJson.addProperty("id", data.id().toString());
+                    entityJson.addProperty("type", data.typeId());
+                    entityJson.addProperty("x", data.x() - origin.getX());
+                    entityJson.addProperty("y", data.y() - origin.getY());
+                    entityJson.addProperty("z", data.z() - origin.getZ());
+                    entityJson.addProperty("nbt", NbtUtils.structureToSnbt(data.nbt()));
+                    entitiesJson.add(entityJson);
+                }
+                layerJson.add("entities", entitiesJson);
+            }
             layersJson.add(layerJson);
         }
 
@@ -264,6 +284,25 @@ public final class SchematicFiles {
                     CompoundTag nbt = BlockData.parseNbt(nbtByPos.get(rx + "," + ry + "," + rz));
                     BlockPos worldPos = origin.offset(rx, ry, rz);
                     layer.add(worldPos, new BlockData(state, nbt));
+                }
+            }
+
+            if (layerJson.has("entities")) {
+                for (JsonElement entityElement : layerJson.getAsJsonArray("entities")) {
+                    JsonObject entityJson = entityElement.getAsJsonObject();
+                    try {
+                        CompoundTag nbt = NbtUtils.snbtToStructure(entityJson.get("nbt").getAsString());
+                        layer.addEntity(new EntityData(
+                                UUID.fromString(entityJson.get("id").getAsString()),
+                                entityJson.get("type").getAsString(),
+                                entityJson.get("x").getAsDouble() + origin.getX(),
+                                entityJson.get("y").getAsDouble() + origin.getY(),
+                                entityJson.get("z").getAsDouble() + origin.getZ(),
+                                nbt));
+                    } catch (Exception e) {
+                        // одна сломанная декорация не должна ронять загрузку всей схемы
+                        TutorialSchematicMod.LOGGER.warn("Не удалось прочитать декорацию: {}", e.getMessage());
+                    }
                 }
             }
 

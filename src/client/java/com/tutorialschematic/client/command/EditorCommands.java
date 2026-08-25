@@ -8,6 +8,7 @@ import com.tutorialschematic.client.EditorState;
 import com.tutorialschematic.client.build.BuildRunner;
 import com.tutorialschematic.client.screen.AnimationEditorScreen;
 import com.tutorialschematic.client.selection.SelectionMode;
+import com.tutorialschematic.client.selection.SelectionTool;
 import com.tutorialschematic.client.selection.SelectionWand;
 import com.tutorialschematic.io.SchematicFiles;
 import com.tutorialschematic.order.OrderConfig;
@@ -41,7 +42,69 @@ public final class EditorCommands {
             dispatcher.register(layerCommand());
             dispatcher.register(buildCommand());
             dispatcher.register(ClientCommands.literal("anim").executes(ctx -> openEditor()));
+            dispatcher.register(posCommand("lpos1", true));
+            dispatcher.register(posCommand("lpos2", false));
         });
+    }
+
+    // ---- /lpos1, /lpos2 ----
+
+    /**
+     * Углы коробки по координатам.
+     *
+     * <p>Кликом угол можно поставить только на существующий блок: если он приходится
+     * на пустоту, прицелиться не во что. Поэтому {@code /lpos1} запоминает первый угол,
+     * а {@code /lpos2} ставит второй и сразу применяет коробку. Без координат берётся
+     * та клетка, в которой стоит игрок, — удобно просто встать в угол будущей области.
+     *
+     * <p>{@code /lpos2 remove} тем же жестом убирает коробку из слоя.
+     */
+    private static LiteralArgumentBuilder<FabricClientCommandSource> posCommand(String name, boolean first) {
+        LiteralArgumentBuilder<FabricClientCommandSource> root = ClientCommands.literal(name)
+                .executes(ctx -> handlePos(first, playerPos(), false))
+                .then(coords((pos, removing) -> handlePos(first, pos, removing), false));
+
+        if (!first) {
+            root = root.then(ClientCommands.literal("remove")
+                    .executes(ctx -> handlePos(false, playerPos(), true))
+                    .then(coords((pos, removing) -> handlePos(false, pos, removing), true)));
+        }
+        return root;
+    }
+
+    /** Три целых аргумента x y z, общие для обеих команд. */
+    private static com.mojang.brigadier.builder.RequiredArgumentBuilder<FabricClientCommandSource, Integer> coords(
+            java.util.function.BiFunction<BlockPos, Boolean, Integer> action, boolean removing) {
+        return ClientCommands.argument("x", IntegerArgumentType.integer())
+                .then(ClientCommands.argument("y", IntegerArgumentType.integer())
+                        .then(ClientCommands.argument("z", IntegerArgumentType.integer())
+                                .executes(ctx -> action.apply(new BlockPos(
+                                        IntegerArgumentType.getInteger(ctx, "x"),
+                                        IntegerArgumentType.getInteger(ctx, "y"),
+                                        IntegerArgumentType.getInteger(ctx, "z")), removing))));
+    }
+
+    private static BlockPos playerPos() {
+        Minecraft client = Minecraft.getInstance();
+        return client.player == null ? BlockPos.ZERO : client.player.blockPosition();
+    }
+
+    private static int handlePos(boolean first, BlockPos pos, boolean removing) {
+        EditorState state = EditorState.get();
+        if (first) {
+            state.setBoxCorner(pos);
+            EditorState.info("Первый угол: " + pos.getX() + " " + pos.getY() + " " + pos.getZ()
+                    + " — теперь /lpos2 по второму");
+            return 1;
+        }
+        BlockPos corner = state.boxCorner();
+        if (corner == null) {
+            EditorState.error("Сначала задайте первый угол: /lpos1");
+            return 0;
+        }
+        SelectionTool.applyBox(corner, pos, removing);
+        state.setBoxCorner(null);
+        return 1;
     }
 
     // ---- /tutorial ----

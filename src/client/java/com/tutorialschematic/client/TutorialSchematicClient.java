@@ -10,7 +10,9 @@ import com.tutorialschematic.client.selection.SelectionTool;
 import com.tutorialschematic.client.selection.SelectionWand;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.event.client.player.ClientPreAttackCallback;
+import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
+import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.InteractionHand;
@@ -46,6 +48,7 @@ public class TutorialSchematicClient implements ClientModInitializer {
         BuildRunner.register();
         Keybinds.register();
         registerMarkupInput();
+        registerDecorationInput();
         TutorialSchematicMod.LOGGER.info("Клиентская часть Tutorial Schematic готова");
     }
 
@@ -95,7 +98,39 @@ public class TutorialSchematicClient implements ClientModInitializer {
                 lastUsePos = target.immutable();
                 lastUseTime = System.currentTimeMillis();
             }
-            return InteractionResult.SUCCESS;
+            // Именно FAIL, а не SUCCESS: Fabric отправляет на сервер пакет
+            // взаимодействия, если результат consumesAction(). С SUCCESS клиент гасил
+            // клик у себя, но пакет уходил — и люк открывал уже сервер.
+            return InteractionResult.FAIL;
+        });
+    }
+
+    /**
+     * Клики по декорациям. Картина, рамка и стенд — сущности, и события по блокам до них
+     * не доходят: луч попадает в сущность, а не в клетку за ней.
+     *
+     * <p>Оба обработчика возвращают {@code FAIL}: он не поглощает действие, поэтому Fabric
+     * не отправляет пакет на сервер. С {@code SUCCESS} рамка успела бы провернуться, а
+     * стенд — принять предмет, ещё до того, как мы их разметили.
+     */
+    private void registerDecorationInput() {
+        UseEntityCallback.EVENT.register((player, level, hand, entity, hit) -> {
+            if (!level.isClientSide() || hand != InteractionHand.MAIN_HAND
+                    || !shouldIntercept(Minecraft.getInstance())) {
+                return InteractionResult.PASS;
+            }
+            return SelectionTool.handleEntityClick(entity, false)
+                    ? InteractionResult.FAIL
+                    : InteractionResult.PASS;
+        });
+
+        AttackEntityCallback.EVENT.register((player, level, hand, entity, hit) -> {
+            if (!level.isClientSide() || !shouldIntercept(Minecraft.getInstance())) {
+                return InteractionResult.PASS;
+            }
+            return SelectionTool.handleEntityClick(entity, true)
+                    ? InteractionResult.FAIL
+                    : InteractionResult.PASS;
         });
     }
 

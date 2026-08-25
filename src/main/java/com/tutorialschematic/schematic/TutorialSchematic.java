@@ -148,6 +148,24 @@ public class TutorialSchematic {
 
     // ---- сводка ----
 
+    /** Слой, в котором лежит эта декорация. Она, как и блок, может быть только в одном. */
+    public BuildLayer layerContainingEntity(java.util.UUID id) {
+        for (BuildLayer layer : layers) {
+            if (layer.containsEntity(id)) {
+                return layer;
+            }
+        }
+        return null;
+    }
+
+    public int totalEntities() {
+        int total = 0;
+        for (BuildLayer layer : layers) {
+            total += layer.entityCount();
+        }
+        return total;
+    }
+
     public int totalBlocks() {
         int total = 0;
         for (BuildLayer layer : layers) {
