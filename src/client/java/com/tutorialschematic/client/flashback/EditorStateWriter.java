@@ -31,6 +31,13 @@ public final class EditorStateWriter {
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
+    /**
+     * Имя сцены, по которому мы узнаём собственную работу. Файл с таким именем сцены
+     * перезаписываем свободно — там наши же камеры, и подобрать их заново обычное дело.
+     * Переименуйте сцену в редакторе, и мод перестанет её трогать.
+     */
+    public static final String SCENE_NAME = "Слои постройки";
+
     private EditorStateWriter() {
     }
 
@@ -43,8 +50,8 @@ public final class EditorStateWriter {
      */
     public static Path write(String uuid, Map<ShotStyle, List<CameraShot>> tracks) {
         Path path = FlashbackBridge.editorStateFolder().resolve(uuid + ".json");
-        if (Files.exists(path) && hasKeyframes(path)) {
-            TutorialSchematicMod.LOGGER.warn("В состоянии редактора уже есть кадры, не трогаем: {}", path);
+        if (Files.exists(path) && !isOurs(path) && hasKeyframes(path)) {
+            TutorialSchematicMod.LOGGER.warn("В состоянии редактора есть чужие кадры, не трогаем: {}", path);
             return null;
         }
 
@@ -57,7 +64,7 @@ public final class EditorStateWriter {
         }
 
         JsonObject scene = new JsonObject();
-        scene.addProperty("name", "Слои постройки");
+        scene.addProperty("name", SCENE_NAME);
         scene.add("keyframeTracks", trackArray);
         scene.addProperty("exportStartTicks", -1);
         scene.addProperty("exportEndTicks", -1);
@@ -82,6 +89,29 @@ public final class EditorStateWriter {
         } catch (IOException e) {
             TutorialSchematicMod.LOGGER.error("Не удалось записать камеры: {}", e.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * Наш ли это файл. Признак — имя сцены: его ставим только мы, и пока игрок его не
+     * менял, содержимое можно смело пересобрать заново.
+     */
+    private static boolean isOurs(Path path) {
+        try {
+            JsonObject root = com.google.gson.JsonParser.parseString(
+                    Files.readString(path, StandardCharsets.UTF_8)).getAsJsonObject();
+            if (!root.has("scenes")) {
+                return false;
+            }
+            for (var element : root.getAsJsonArray("scenes")) {
+                JsonObject scene = element.getAsJsonObject();
+                if (scene.has("name") && SCENE_NAME.equals(scene.get("name").getAsString())) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            return false;
         }
     }
 

@@ -24,83 +24,141 @@ class ShotPlannerTest {
         return blocks;
     }
 
-    @Test
-    void камераОбходитЗаслонившуюСтену() {
-        // снимаем стену на z=0, а на z=-6 уже стоит глухая стена побольше.
-        // Значит камеру надо ставить с той стороны, где её нет, то есть z положительный.
-        List<Pos> target = wall(0, 9, 6);
-        Set<Pos> occluders = new HashSet<>(wall(-6, 21, 14));
-
-        CameraShot shot = ShotPlanner.plan(target, occluders, ShotStyle.MID_HOLD, 70, 0);
-
-        assertTrue(shot.z() > 0, "камера ушла на свободную сторону, а не за глухую стену");
+    private static ShotPlanner.Placement plan(List<Pos> targets, Set<Pos> occluders, ShotStyle style) {
+        return ShotPlanner.plan(targets, occluders, style, 70, 0, Double.NaN);
     }
 
     @Test
-    void безЗаслоновРакурсВсёРавноВалиден() {
+    void камераОбходитЗаслонившуюСтену() {
+        // снимаем стену на z=0, а на z=-6 уже стоит глухая стена побольше:
+        // камера обязана уйти на свободную сторону
         List<Pos> target = wall(0, 9, 6);
-        CameraShot shot = ShotPlanner.plan(target, Set.of(), ShotStyle.MID_HOLD, 70, 0);
+        Set<Pos> occluders = new HashSet<>(wall(-6, 21, 14));
 
-        double[] center = ShotPlanner.centerOf(target);
-        double[] from = {shot.x(), shot.y(), shot.z()};
-        double[] dir = CameraFraming.direction(shot.yaw(), shot.pitch());
+        ShotPlanner.Placement placement = plan(target, occluders, ShotStyle.MID_HOLD);
+        assertTrue(placement.shot().z() > 0, "камера ушла туда, откуда видно");
+    }
 
-        double dx = center[0] - from[0], dy = center[1] - from[1], dz = center[2] - from[2];
-        double length = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        assertEquals(dx / length, dir[0], 1.0e-5, "камера смотрит в центр слоя");
-        assertEquals(dz / length, dir[2], 1.0e-5);
+    @Test
+    void приРавнойВидимостиВыбираетсяТриЧетверти() {
+        // Главное исправление: раньше побеждал первый кандидат перебора и камера всегда
+        // вставала в лоб. Теперь при равной видимости выигрывает диагональ.
+        List<Pos> target = wall(0, 9, 6);
+        ShotPlanner.Placement placement = plan(target, Set.of(), ShotStyle.MID_HOLD);
+
+        double offset = Math.abs(((placement.azimuth() % 90) + 90) % 90 - 45);
+        assertTrue(offset < 20,
+                "азимут " + placement.azimuth() + " должен быть ближе к диагонали, чем к оси");
+    }
+
+    @Test
+    void высотаБерётсяИзСерединыДиапазонаАНеСКрая() {
+        List<Pos> target = wall(0, 9, 6);
+        for (ShotStyle style : ShotStyle.values()) {
+            ShotPlanner.Placement placement = plan(target, Set.of(), style);
+            double middle = (style.minElevation() + style.maxElevation()) / 2;
+
+            assertEquals(middle, placement.elevation(), 1.0e-6,
+                    style.displayName() + ": при пустом дворе высота должна быть посередине");
+        }
     }
 
     @Test
     void камераНеУходитВЗенит() {
-        // геометрически сверху видно всё, но снимать так нельзя — доктрина держит рамки
         List<Pos> target = wall(0, 9, 6);
-        Set<Pos> occluders = new HashSet<>();
-
         for (ShotStyle style : ShotStyle.values()) {
-            CameraShot shot = ShotPlanner.plan(target, occluders, style, 70, 0);
-            double[] center = ShotPlanner.centerOf(target);
-            double dy = shot.y() - center[1];
-            double horizontal = Math.hypot(shot.x() - center[0], shot.z() - center[2]);
-            double elevation = Math.toDegrees(Math.atan2(dy, horizontal));
-
-            assertTrue(elevation <= style.maxElevation() + 0.001,
-                    style.displayName() + ": подъём " + elevation + " вышел за диапазон");
-            assertTrue(elevation >= style.minElevation() - 0.001,
-                    style.displayName() + ": подъём " + elevation + " ниже диапазона");
+            ShotPlanner.Placement placement = plan(target, Set.of(), style);
+            assertTrue(placement.elevation() <= style.maxElevation() + 1.0e-6,
+                    style.displayName() + ": подъём вышел за диапазон");
+            assertTrue(placement.elevation() >= style.minElevation() - 1.0e-6,
+                    style.displayName() + ": подъём ниже диапазона");
         }
+    }
+
+    @Test
+    void соседниеПланыРазворачиваютсяНеМенееЧемНаТридцатьГрадусов() {
+        // иначе склейка читается рывком, а не сменой плана
+        List<Pos> target = wall(0, 9, 6);
+        double previous = plan(target, Set.of(), ShotStyle.MID_HOLD).azimuth();
+
+        ShotPlanner.Placement next = ShotPlanner.plan(target, Set.of(), ShotStyle.MID_HOLD, 70, 100, previous);
+        double turn = Math.abs(ShotPlanner.shortestTurn(next.azimuth() - previous));
+
+        assertTrue(turn >= 30, "разворот всего " + turn + " градусов — это рывок");
+        assertTrue(turn <= 150, "разворот " + turn + " градусов — перескок через ось");
     }
 
     @Test
     void ближнийРакурсБлижеДальнего() {
         List<Pos> target = wall(0, 15, 10);
-        double[] center = ShotPlanner.centerOf(target);
-
-        double far = distance(ShotPlanner.plan(target, Set.of(), ShotStyle.FAR_HOLD, 70, 0), center);
-        double mid = distance(ShotPlanner.plan(target, Set.of(), ShotStyle.MID_HOLD, 70, 0), center);
-        double near = distance(ShotPlanner.plan(target, Set.of(), ShotStyle.NEAR_HOLD, 70, 0), center);
+        double far = plan(target, Set.of(), ShotStyle.FAR_HOLD).distance();
+        double mid = plan(target, Set.of(), ShotStyle.MID_HOLD).distance();
+        double near = plan(target, Set.of(), ShotStyle.NEAR_HOLD).distance();
 
         assertTrue(near < mid, "ближний ближе среднего");
         assertTrue(mid < far, "средний ближе дальнего");
     }
 
     @Test
-    void пролётДаётДваКадраСРазныхТочек() {
+    void наездПриближаетАОтъездОтдаляет() {
         List<Pos> target = wall(0, 9, 6);
-        List<CameraShot> flight = ShotPlanner.planFlight(
-                target, Set.of(), ShotStyle.MID_FLY, 70, 100, 260, 40);
 
-        assertEquals(2, flight.size());
-        assertEquals(100, flight.get(0).tick());
-        assertEquals(260, flight.get(1).tick());
+        ShotPlanner.Placement in = plan(target, Set.of(), ShotStyle.DOLLY_IN);
+        List<CameraShot> inShots = ShotPlanner.movementShots(target, in, ShotStyle.DOLLY_IN, 400);
+        assertEquals(2, inShots.size());
+        assertTrue(distance(inShots.get(1), target) < distance(inShots.get(0), target), "наезд приближает");
 
-        double moved = Math.hypot(flight.get(0).x() - flight.get(1).x(),
-                flight.get(0).z() - flight.get(1).z());
+        ShotPlanner.Placement out = plan(target, Set.of(), ShotStyle.DOLLY_OUT);
+        List<CameraShot> outShots = ShotPlanner.movementShots(target, out, ShotStyle.DOLLY_OUT, 400);
+        assertTrue(distance(outShots.get(1), target) > distance(outShots.get(0), target), "отъезд отдаляет");
+    }
+
+    @Test
+    void неподвижнаяДоктринаДаётОдинКадр() {
+        List<Pos> target = wall(0, 9, 6);
+        ShotPlanner.Placement placement = plan(target, Set.of(), ShotStyle.FAR_HOLD);
+
+        assertEquals(1, ShotPlanner.movementShots(target, placement, ShotStyle.FAR_HOLD, 400).size());
+    }
+
+    @Test
+    void дугаУводитКамеруВБокНоНеМеняетДистанцию() {
+        List<Pos> target = wall(0, 9, 6);
+        ShotPlanner.Placement placement = plan(target, Set.of(), ShotStyle.MID_ARC);
+        List<CameraShot> shots = ShotPlanner.movementShots(target, placement, ShotStyle.MID_ARC, 400);
+
+        assertEquals(2, shots.size());
+        assertEquals(distance(shots.get(0), target), distance(shots.get(1), target), 1.0e-6);
+
+        double moved = Math.hypot(shots.get(0).x() - shots.get(1).x(), shots.get(0).z() - shots.get(1).z());
         assertTrue(moved > 1, "камера действительно проехала");
+    }
 
-        // но осталась на том же расстоянии от объекта — это дуга, а не наезд
+    @Test
+    void кадрыДвиженияНеСовпадаютПоТику() {
+        // совпадение затёрло бы соседний кадр: они лежат в словаре по номеру тика
+        List<Pos> target = wall(0, 9, 6);
+        ShotPlanner.Placement placement = ShotPlanner.plan(target, Set.of(), ShotStyle.ORBIT, 70, 100, Double.NaN);
+        List<CameraShot> shots = ShotPlanner.movementShots(target, placement, ShotStyle.ORBIT, 300);
+
+        assertEquals(2, shots.size());
+        assertTrue(shots.get(0).tick() < shots.get(1).tick());
+    }
+
+    @Test
+    void целимсяВышеЦентраРадиПравилаТретей() {
+        // постройка должна садиться в нижние две трети кадра, а не делить его пополам
+        List<Pos> target = wall(0, 9, 20);
+        ShotPlanner.Placement placement = plan(target, Set.of(), ShotStyle.MID_HOLD);
         double[] center = ShotPlanner.centerOf(target);
-        assertEquals(distance(flight.get(0), center), distance(flight.get(1), center), 1.0e-6);
+
+        double[] from = {placement.shot().x(), placement.shot().y(), placement.shot().z()};
+        double[] dir = CameraFraming.direction(placement.shot().yaw(), placement.shot().pitch());
+
+        // луч взгляда проходит выше геометрического центра
+        double horizontal = Math.hypot(center[0] - from[0], center[2] - from[2]);
+        double aimedY = from[1] + dir[1] / Math.hypot(dir[0], dir[2]) * horizontal;
+        assertTrue(aimedY > center[1], "точка прицеливания выше центра слоя");
     }
 
     @Test
@@ -113,7 +171,8 @@ class ShotPlannerTest {
                 "блок ровно на пути должен заслонять");
     }
 
-    private static double distance(CameraShot shot, double[] center) {
+    private static double distance(CameraShot shot, List<Pos> target) {
+        double[] center = ShotPlanner.centerOf(target);
         return Math.sqrt(Math.pow(shot.x() - center[0], 2)
                 + Math.pow(shot.y() - center[1], 2)
                 + Math.pow(shot.z() - center[2], 2));

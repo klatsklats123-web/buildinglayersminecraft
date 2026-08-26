@@ -8,100 +8,155 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Подбор ракурса на слой: перебираем точки вокруг и берём ту, откуда видно больше всего.
+ * Подбор ракурса на слой.
  *
- * <p>Перебор честный, а не эвристика «наверное, лучше спереди»: из каждой точки-кандидата
- * пускаются лучи в блоки слоя, и считается, сколько долетело мимо уже построенного.
+ * <p>Видимость — условие необходимое, но не достаточное. Раньше побеждал первый кандидат
+ * с лучшей видимостью, а поскольку при пустом дворе видно отовсюду, лучшим всегда
+ * оказывался первый по счёту: камера каждый раз вставала с одной и той же стороны и на
+ * нижней границе допустимой высоты. Планы выходили одинаковые и случайные.
  *
- * <p>Подъём камеры перебирается только внутри диапазона доктрины. Без этого ограничения
- * победителем всегда становится зенит — сверху заслонять нечем, — а снятое сверху выглядит
- * мёртво. Ограничение и делает выбор операторским, а не геометрическим.
+ * <p>Теперь при равной видимости решает композиция, и правила взяты из съёмочной практики:
+ *
+ * <ul>
+ *   <li><b>Три четверти вместо фронта.</b> Строго перпендикулярно стене постройка выглядит
+ *       плоско; угол около сорока пяти градусов к грани показывает две стороны сразу;</li>
+ *   <li><b>Высота из середины диапазона</b>, а не с самого низа — иначе все планы
+ *       оказываются на одной линии;</li>
+ *   <li><b>Разворот между соседними планами не меньше тридцати градусов.</b> Меньше — и
+ *       склейка читается как рывок, а не как смена плана;</li>
+ *   <li><b>Не перепрыгивать через ось.</b> План с противоположной стороны переворачивает
+ *       направление движения в кадре;</li>
+ *   <li><b>Правило третей.</b> Целимся не в самый центр, а чуть выше — постройка садится
+ *       в нижние две трети кадра, как это и делают в архитектурной съёмке.</li>
+ * </ul>
  */
 public final class ShotPlanner {
 
-    /** Сколько направлений по кругу пробуем. 24 — это через каждые 15 градусов. */
     private static final int AZIMUTH_STEPS = 24;
-    /** Сколько высот внутри диапазона доктрины. */
-    private static final int ELEVATION_STEPS = 3;
-    /** Больше стольки блоков в проверке видимости не участвует — считать дольше незачем. */
+    private static final int ELEVATION_STEPS = 5;
     private static final int MAX_SAMPLES = 160;
 
+    /** Видимость важнее композиции, поэтому её вес на порядок больше. */
+    private static final double VISIBILITY_WEIGHT = 10.0;
+    /** Ближе этого угла к предыдущему плану ставить нельзя — склейка читается рывком. */
+    private static final double MIN_TURN = 30;
+    /** Дальше этого — перескок через ось, движение в кадре перевернётся. */
+    private static final double MAX_TURN = 150;
+
     private ShotPlanner() {
+    }
+
+    /** Ракурс вместе с параметрами, из которых он получен: нужны движению и следующему плану. */
+    public record Placement(CameraShot shot, double azimuth, double elevation, double distance) {
     }
 
     /**
      * Лучший ракурс на набор блоков.
      *
-     * @param targets    что снимаем
-     * @param occluders  что может заслонить — блоки, уже стоящие в мире
-     * @param style      доктрина: насколько близко и с какой высоты
-     * @param fovDegrees угол обзора камеры
-     * @param tick       тик записи, на который встанет кадр
+     * @param previousAzimuth азимут предыдущего плана этой же дорожки, либо {@code NaN}
      */
-    public static CameraShot plan(Collection<Pos> targets, Set<Pos> occluders,
-                                  ShotStyle style, double fovDegrees, int tick) {
+    public static Placement plan(Collection<Pos> targets, Set<Pos> occluders,
+                                 ShotStyle style, double fovDegrees, int tick,
+                                 double previousAzimuth) {
         double[] center = centerOf(targets);
         double radius = radiusOf(targets, center);
         double distance = CameraFraming.distanceFor(radius, fovDegrees, style.margin());
         List<Pos> samples = sample(targets);
 
-        double bestScore = -1;
-        double[] bestPosition = null;
+        double bestScore = Double.NEGATIVE_INFINITY;
+        double bestAzimuth = 45;
+        double bestElevation = (style.minElevation() + style.maxElevation()) / 2;
 
         for (int a = 0; a < AZIMUTH_STEPS; a++) {
             double azimuth = a * 360.0 / AZIMUTH_STEPS;
             for (int e = 0; e < ELEVATION_STEPS; e++) {
-                double elevation = ELEVATION_STEPS == 1
-                        ? style.minElevation()
-                        : style.minElevation() + e * (style.maxElevation() - style.minElevation()) / (ELEVATION_STEPS - 1);
+                double elevation = style.minElevation()
+                        + e * (style.maxElevation() - style.minElevation()) / (ELEVATION_STEPS - 1);
 
                 double[] candidate = CameraFraming.positionAround(center, distance, azimuth, elevation);
-                double score = Occlusion.visibleFraction(candidate, samples, occluders);
+                double visibility = Occlusion.visibleFraction(candidate, samples, occluders);
+                double score = visibility * VISIBILITY_WEIGHT
+                        + threeQuarterScore(azimuth)
+                        + elevationScore(elevation, style)
+                        + turnScore(azimuth, previousAzimuth);
 
-                // При равной видимости берём ту, что ниже: приземлённый ракурс живее,
-                // а перебор идёт от нижней границы диапазона вверх.
-                if (score > bestScore + 1.0e-9) {
+                if (score > bestScore) {
                     bestScore = score;
-                    bestPosition = candidate;
+                    bestAzimuth = azimuth;
+                    bestElevation = elevation;
                 }
             }
         }
-
-        if (bestPosition == null) {
-            bestPosition = CameraFraming.positionAround(center, distance, 0, style.minElevation());
-        }
-        float[] angles = CameraFraming.lookAt(bestPosition, center);
-        return new CameraShot(tick, bestPosition[0], bestPosition[1], bestPosition[2], angles[0], angles[1]);
+        return place(center, radius, distance, bestAzimuth, bestElevation, tick);
     }
 
     /**
-     * Пара кадров для пролёта: та же высота и расстояние, но камера едет по дуге вокруг
-     * слоя. Дуга небольшая — сильный облёт за время одного слоя выглядит суетливо.
+     * Кадры движения за время слоя: для неподвижной доктрины один, для остальных два —
+     * начало и конец.
      */
-    public static List<CameraShot> planFlight(Collection<Pos> targets, Set<Pos> occluders,
-                                              ShotStyle style, double fovDegrees,
-                                              int startTick, int endTick, double arcDegrees) {
-        CameraShot anchor = plan(targets, occluders, style, fovDegrees, startTick);
-        double[] center = centerOf(targets);
-
-        double dx = anchor.x() - center[0];
-        double dy = anchor.y() - center[1];
-        double dz = anchor.z() - center[2];
-        double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        double horizontal = Math.sqrt(dx * dx + dz * dz);
-        double elevation = Math.toDegrees(Math.atan2(dy, horizontal));
-        double azimuth = Math.toDegrees(Math.atan2(dx, dz));
-
-        double[] from = CameraFraming.positionAround(center, distance, azimuth - arcDegrees / 2, elevation);
-        double[] to = CameraFraming.positionAround(center, distance, azimuth + arcDegrees / 2, elevation);
-
-        float[] fromAngles = CameraFraming.lookAt(from, center);
-        float[] toAngles = CameraFraming.lookAt(to, center);
-
+    public static List<CameraShot> movementShots(Collection<Pos> targets, Placement start,
+                                                 ShotStyle style, int endTick) {
         List<CameraShot> shots = new ArrayList<>(2);
-        shots.add(new CameraShot(startTick, from[0], from[1], from[2], fromAngles[0], fromAngles[1]));
-        shots.add(new CameraShot(endTick, to[0], to[1], to[2], toAngles[0], toAngles[1]));
+        shots.add(start.shot());
+        if (!style.moving() || endTick <= start.shot().tick()) {
+            return shots;
+        }
+        double[] center = centerOf(targets);
+        double radius = radiusOf(targets, center);
+
+        double azimuth = start.azimuth() + style.arcDegrees();
+        double distance = start.distance() * style.distanceRatio();
+
+        shots.add(place(center, radius, distance, azimuth, start.elevation(), endTick).shot());
         return shots;
+    }
+
+    private static Placement place(double[] center, double radius, double distance,
+                                   double azimuth, double elevation, int tick) {
+        double[] position = CameraFraming.positionAround(center, distance, azimuth, elevation);
+        // Правило третей: целимся выше середины, чтобы постройка села в нижние две трети
+        // кадра, а не делила его пополам.
+        double[] aim = {center[0], center[1] + radius * 0.18, center[2]};
+        float[] angles = CameraFraming.lookAt(position, aim);
+        return new Placement(
+                new CameraShot(tick, position[0], position[1], position[2], angles[0], angles[1]),
+                azimuth, elevation, distance);
+    }
+
+    /**
+     * Насколько ракурс похож на три четверти: максимум на диагоналях, ноль — строго вдоль
+     * оси, то есть в лоб стене.
+     */
+    static double threeQuarterScore(double azimuth) {
+        double offset = Math.abs(((azimuth % 90) + 90) % 90 - 45);
+        return 1.0 - offset / 45.0;
+    }
+
+    /** Середина диапазона высот лучше краёв: у пола и у потолка планы однообразны. */
+    private static double elevationScore(double elevation, ShotStyle style) {
+        double middle = (style.minElevation() + style.maxElevation()) / 2;
+        double half = Math.max(1.0e-6, (style.maxElevation() - style.minElevation()) / 2);
+        return 0.6 * (1.0 - Math.abs(elevation - middle) / half);
+    }
+
+    /** Разворот от предыдущего плана: слишком малый — рывок, слишком большой — перескок через ось. */
+    static double turnScore(double azimuth, double previousAzimuth) {
+        if (Double.isNaN(previousAzimuth)) {
+            return 0;
+        }
+        double turn = Math.abs(shortestTurn(azimuth - previousAzimuth));
+        if (turn < MIN_TURN) {
+            return -3.0 * (1.0 - turn / MIN_TURN);
+        }
+        if (turn > MAX_TURN) {
+            return -2.0 * (turn - MAX_TURN) / (180 - MAX_TURN);
+        }
+        return 1.2;
+    }
+
+    /** Кратчайший разворот в градусах, от -180 до 180. */
+    static double shortestTurn(double degrees) {
+        return ((degrees % 360) + 540) % 360 - 180;
     }
 
     static double[] centerOf(Collection<Pos> blocks) {
@@ -128,7 +183,6 @@ public final class ShotPlanner {
         return max;
     }
 
-    /** Равномерная выборка по списку — считать видимость по всем блокам стены незачем. */
     private static List<Pos> sample(Collection<Pos> blocks) {
         if (blocks.size() <= MAX_SAMPLES) {
             return new ArrayList<>(blocks);

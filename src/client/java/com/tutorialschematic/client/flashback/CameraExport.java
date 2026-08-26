@@ -36,8 +36,6 @@ public final class CameraExport {
     /** Метка конца постройки — даёт последнему слою момент окончания для пролётов. */
     public static final String MARKER_END = "Постройка завершена";
 
-    /** Насколько градусов ведёт камеру пролётная доктрина за время одного слоя. */
-    private static final double FLIGHT_ARC = 35;
 
     private CameraExport() {
     }
@@ -164,8 +162,10 @@ public final class CameraExport {
                                                                List<LayerTiming> timings) {
         double fov = Minecraft.getInstance().options.fov().get();
         Map<ShotStyle, List<CameraShot>> tracks = new EnumMap<>(ShotStyle.class);
+        Map<ShotStyle, Double> lastAzimuth = new EnumMap<>(ShotStyle.class);
         for (ShotStyle style : ShotStyle.values()) {
             tracks.put(style, new ArrayList<>());
+            lastAzimuth.put(style, Double.NaN);
         }
 
         // заслоняют только те слои, что уже построены к этому моменту — копим по ходу
@@ -175,12 +175,14 @@ public final class CameraExport {
             List<Pos> targets = positionsOf(timing.layer());
 
             for (ShotStyle style : ShotStyle.values()) {
-                if (style.moving()) {
-                    tracks.get(style).addAll(ShotPlanner.planFlight(targets, built, style, fov,
-                            timing.startTick(), timing.endTick(), FLIGHT_ARC));
-                } else {
-                    tracks.get(style).add(ShotPlanner.plan(targets, built, style, fov, timing.startTick()));
-                }
+                ShotPlanner.Placement start = ShotPlanner.plan(targets, built, style, fov,
+                        timing.startTick(), lastAzimuth.get(style));
+                lastAzimuth.put(style, start.azimuth());
+
+                // Конечный кадр движения ставим на тик раньше следующего слоя: кадры
+                // лежат в словаре по тику, и совпадение просто затёрло бы соседний.
+                tracks.get(style).addAll(
+                        ShotPlanner.movementShots(targets, start, style, timing.endTick() - 1));
             }
             built.addAll(targets);
         }
