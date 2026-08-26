@@ -171,10 +171,26 @@ public final class CameraExport {
         // заслоняют только те слои, что уже построены к этому моменту — копим по ходу
         Set<Pos> built = new HashSet<>();
 
+        // Общий план ставится один раз на всю запись и кадрируется по всей постройке
+        // целиком — к нему возвращаются, чтобы увидеть, насколько дом вырос.
+        List<Pos> everything = new ArrayList<>();
+        for (LayerTiming timing : timings) {
+            everything.addAll(positionsOf(timing.layer()));
+        }
+        for (ShotStyle style : ShotStyle.values()) {
+            if (style.wholeBuild() && !everything.isEmpty()) {
+                tracks.get(style).add(ShotPlanner.plan(everything, Set.of(), style, fov,
+                        timings.get(0).startTick(), Double.NaN).shot());
+            }
+        }
+
         for (LayerTiming timing : timings) {
             List<Pos> targets = positionsOf(timing.layer());
 
             for (ShotStyle style : ShotStyle.values()) {
+                if (style.wholeBuild()) {
+                    continue;
+                }
                 ShotPlanner.Placement start = ShotPlanner.plan(targets, built, style, fov,
                         timing.startTick(), lastAzimuth.get(style));
                 lastAzimuth.put(style, start.azimuth());

@@ -43,6 +43,11 @@ public final class ShotPlanner {
     /** Дальше этого — перескок через ось, движение в кадре перевернётся. */
     private static final double MAX_TURN = 150;
 
+    /** На сколько градусов поднимаем камеру над плоским слоем. */
+    private static final double FLAT_LIFT = 25;
+    /** Выше этого не поднимаемся ни при какой форме: дальше начинается мёртвый вид сверху. */
+    private static final double ELEVATION_CEILING = 62;
+
     private ShotPlanner() {
     }
 
@@ -63,21 +68,28 @@ public final class ShotPlanner {
         double distance = CameraFraming.distanceFor(radius, fovDegrees, style.margin());
         List<Pos> samples = sample(targets);
 
+        // Плоский слой — пол, фундамент, потолок — с малой высоты виден с торца, то есть
+        // никак. Поднимаем камеру тем сильнее, чем слой площе; вертикальные стены
+        // остаются на своей высоте.
+        double lift = FLAT_LIFT * flatness(targets);
+        double minElevation = Math.min(style.minElevation() + lift, ELEVATION_CEILING);
+        double maxElevation = Math.min(style.maxElevation() + lift, ELEVATION_CEILING);
+
         double bestScore = Double.NEGATIVE_INFINITY;
         double bestAzimuth = 45;
-        double bestElevation = (style.minElevation() + style.maxElevation()) / 2;
+        double bestElevation = (minElevation + maxElevation) / 2;
 
         for (int a = 0; a < AZIMUTH_STEPS; a++) {
             double azimuth = a * 360.0 / AZIMUTH_STEPS;
             for (int e = 0; e < ELEVATION_STEPS; e++) {
-                double elevation = style.minElevation()
-                        + e * (style.maxElevation() - style.minElevation()) / (ELEVATION_STEPS - 1);
+                double elevation = minElevation
+                        + e * (maxElevation - minElevation) / (ELEVATION_STEPS - 1);
 
                 double[] candidate = CameraFraming.positionAround(center, distance, azimuth, elevation);
                 double visibility = Occlusion.visibleFraction(candidate, samples, occluders);
                 double score = visibility * VISIBILITY_WEIGHT
                         + threeQuarterScore(azimuth)
-                        + elevationScore(elevation, style)
+                        + elevationScore(elevation, minElevation, maxElevation)
                         + turnScore(azimuth, previousAzimuth);
 
                 if (score > bestScore) {
@@ -132,11 +144,37 @@ public final class ShotPlanner {
         return 1.0 - offset / 45.0;
     }
 
-    /** Середина диапазона высот лучше краёв: у пола и у потолка планы однообразны. */
-    private static double elevationScore(double elevation, ShotStyle style) {
-        double middle = (style.minElevation() + style.maxElevation()) / 2;
-        double half = Math.max(1.0e-6, (style.maxElevation() - style.minElevation()) / 2);
+    /** Середина диапазона высот лучше краёв: у самых границ планы однообразны. */
+    private static double elevationScore(double elevation, double minElevation, double maxElevation) {
+        double middle = (minElevation + maxElevation) / 2;
+        double half = Math.max(1.0e-6, (maxElevation - minElevation) / 2);
         return 0.6 * (1.0 - Math.abs(elevation - middle) / half);
+    }
+
+    /**
+     * Насколько слой плоский: 1 — горизонтальный лист вроде пола, 0 — стена или объёмный кусок.
+     *
+     * <p>Считается по отношению высоты к большей из горизонтальных сторон. Половина и выше
+     * означает, что слой достаточно вертикален и поднимать камеру незачем.
+     */
+    static double flatness(Collection<Pos> blocks) {
+        if (blocks.isEmpty()) {
+            return 0;
+        }
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+        for (Pos pos : blocks) {
+            minX = Math.min(minX, pos.x());
+            minY = Math.min(minY, pos.y());
+            minZ = Math.min(minZ, pos.z());
+            maxX = Math.max(maxX, pos.x());
+            maxY = Math.max(maxY, pos.y());
+            maxZ = Math.max(maxZ, pos.z());
+        }
+        double vertical = maxY - minY + 1;
+        double horizontal = Math.max(maxX - minX + 1, maxZ - minZ + 1);
+        double ratio = vertical / Math.max(1.0, horizontal);
+        return Math.max(0.0, Math.min(1.0, 1.0 - ratio * 2.0));
     }
 
     /** Разворот от предыдущего плана: слишком малый — рывок, слишком большой — перескок через ось. */

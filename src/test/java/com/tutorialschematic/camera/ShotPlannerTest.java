@@ -161,6 +161,42 @@ class ShotPlannerTest {
         assertTrue(aimedY > center[1], "точка прицеливания выше центра слоя");
     }
 
+    /** Горизонтальный лист — пол или фундамент. */
+    private static List<Pos> floor(int y, int width, int depth) {
+        List<Pos> blocks = new ArrayList<>();
+        for (int x = 0; x < width; x++) {
+            for (int z = 0; z < depth; z++) {
+                blocks.add(new Pos(x, y, z));
+            }
+        }
+        return blocks;
+    }
+
+    @Test
+    void плоскийСлойСнимаетсяВыше() {
+        // Ровно возражение из практики: фундамент с малой высоты виден с торца, то есть
+        // никак. Стена при этом подниматься не должна.
+        double floorElevation = plan(floor(0, 15, 15), Set.of(), ShotStyle.MID_HOLD).elevation();
+        double wallElevation = plan(wall(0, 15, 10), Set.of(), ShotStyle.MID_HOLD).elevation();
+
+        assertTrue(floorElevation > wallElevation + 10,
+                "над полом " + floorElevation + ", над стеной " + wallElevation);
+    }
+
+    @Test
+    void плоскостьСчитаетсяПоФорме() {
+        assertTrue(ShotPlanner.flatness(floor(0, 20, 20)) > 0.8, "пол плоский");
+        assertEquals(0.0, ShotPlanner.flatness(wall(0, 10, 10)), 1.0e-9, "стена не плоская");
+        assertEquals(0.0, ShotPlanner.flatness(wall(0, 6, 12)), 1.0e-9, "высокая стена тем более");
+    }
+
+    @Test
+    void камераНеПоднимаетсяВышеПотолкаДажеНадСамымПлоским() {
+        // иначе адаптация по форме утащила бы нас в зенит, от которого мы и уходили
+        double elevation = plan(floor(0, 60, 60), Set.of(), ShotStyle.OVERVIEW_HIGH).elevation();
+        assertTrue(elevation <= 62.0 + 1.0e-6, "подъём " + elevation + " — это уже вид сверху");
+    }
+
     @Test
     void лучВидитЦельНапрямуюИНеВидитСквозьБлок() {
         Pos target = new Pos(0, 0, 0);
