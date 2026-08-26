@@ -20,8 +20,17 @@ public final class RecordedBuild {
     /** Сколько тиков ждём готовности, прежде чем сдаться. Десять секунд с запасом. */
     private static final int TIMEOUT_TICKS = 200;
 
+    /**
+     * Сколько тиков записи оставляем после последнего блока. Обрывать ровно на нём нельзя:
+     * звук установки ещё звенит, да и кадр на готовой постройке в ролике нужен.
+     */
+    private static final int TAIL_TICKS = 40;
+
     private static boolean waiting;
     private static int waited;
+    /** Запись включали мы — значит нам её и выключать. Чужую не трогаем. */
+    private static boolean ownsRecording;
+    private static int tailLeft = -1;
 
     private RecordedBuild() {
     }
@@ -51,6 +60,8 @@ public final class RecordedBuild {
         }
         waiting = true;
         waited = 0;
+        ownsRecording = true;
+        tailLeft = -1;
         EditorState.info("Запись включена, ждём слепок мира — постройка начнётся сама");
         return true;
     }
@@ -58,9 +69,30 @@ public final class RecordedBuild {
     public static void cancel() {
         waiting = false;
         waited = 0;
+        ownsRecording = false;
+        tailLeft = -1;
+    }
+
+    /**
+     * Постройка закончилась — заводим отсчёт до остановки записи.
+     *
+     * <p>Останавливаем сами и по факту окончания, а не по секундомеру: иначе длительность
+     * записи и длительность постройки разъезжаются, и метки перестают попадать туда,
+     * где на самом деле сменились слои.
+     */
+    public static void onBuildFinished() {
+        if (ownsRecording && FlashbackBridge.isRecording()) {
+            tailLeft = TAIL_TICKS;
+        }
     }
 
     private static void tick() {
+        if (tailLeft >= 0 && --tailLeft < 0) {
+            ownsRecording = false;
+            if (FlashbackBridge.finishRecording()) {
+                EditorState.info("Запись остановлена. Сохраните реплей, потом «Расставить камеры»");
+            }
+        }
         if (!waiting) {
             return;
         }

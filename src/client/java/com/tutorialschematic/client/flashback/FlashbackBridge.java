@@ -34,6 +34,7 @@ public final class FlashbackBridge {
     private static Method addMarkerMethod;
     private static Method readyToWriteMethod;
     private static Method startRecordingMethod;
+    private static Method finishRecordingMethod;
     private static Constructor<?> markerConstructor;
     private static boolean warned;
 
@@ -53,6 +54,7 @@ public final class FlashbackBridge {
             flashbackClass = Class.forName("com.moulberry.flashback.Flashback");
             recorderField = flashbackClass.getField("RECORDER");
             startRecordingMethod = flashbackClass.getMethod("startRecordingReplay");
+            finishRecordingMethod = flashbackClass.getMethod("finishRecordingReplay");
 
             Class<?> recorderClass = Class.forName("com.moulberry.flashback.record.Recorder");
             Class<?> markerClass = Class.forName("com.moulberry.flashback.record.ReplayMarker");
@@ -120,6 +122,23 @@ public final class FlashbackBridge {
             return true;
         } catch (Throwable e) {
             warnOnce("Не удалось поставить метку в записи: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Останавливает запись. Дальше Flashback сам решит, писать файл сразу или показать
+     * экран сохранения — это его настройка Quicksave.
+     */
+    public static boolean finishRecording() {
+        if (!isAvailable() || !isRecording()) {
+            return false;
+        }
+        try {
+            finishRecordingMethod.invoke(null);
+            return true;
+        } catch (Throwable e) {
+            warnOnce("Не удалось остановить запись Flashback: " + e.getMessage());
             return false;
         }
     }

@@ -43,8 +43,8 @@ public final class EditorStateWriter {
      */
     public static Path write(String uuid, Map<ShotStyle, List<CameraShot>> tracks) {
         Path path = FlashbackBridge.editorStateFolder().resolve(uuid + ".json");
-        if (Files.exists(path)) {
-            TutorialSchematicMod.LOGGER.warn("Состояние редактора для реплея уже есть, не трогаем: {}", path);
+        if (Files.exists(path) && hasKeyframes(path)) {
+            TutorialSchematicMod.LOGGER.warn("В состоянии редактора уже есть кадры, не трогаем: {}", path);
             return null;
         }
 
@@ -85,6 +85,42 @@ public final class EditorStateWriter {
         }
     }
 
+    /**
+     * Есть ли в файле хоть один ключевой кадр.
+     *
+     * <p>Пустое состояние Flashback создаёт сам, едва вы открыли реплей, — отказываться
+     * из-за такого файла значит не сработать никогда. А вот файл с кадрами трогать нельзя:
+     * там может быть ручная работа.
+     */
+    private static boolean hasKeyframes(Path path) {
+        try {
+            JsonObject root = com.google.gson.JsonParser.parseString(
+                    Files.readString(path, StandardCharsets.UTF_8)).getAsJsonObject();
+            if (!root.has("scenes")) {
+                return false;
+            }
+            for (var element : root.getAsJsonArray("scenes")) {
+                JsonObject scene = element.getAsJsonObject();
+                if (!scene.has("keyframeTracks")) {
+                    continue;
+                }
+                for (var trackElement : scene.getAsJsonArray("keyframeTracks")) {
+                    JsonObject track = trackElement.getAsJsonObject();
+                    if (track.has("keyframesByTick")
+                            && !track.getAsJsonObject("keyframesByTick").isEmpty()) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            // не разобрали — считаем, что там что-то ценное, и не лезем
+            TutorialSchematicMod.LOGGER.warn("Не удалось прочитать состояние редактора {}: {}",
+                    path.getFileName(), e.getMessage());
+            return true;
+        }
+    }
+
     private static JsonObject emptyHistory() {
         JsonObject history = new JsonObject();
         history.add("entries", new JsonArray());
@@ -99,7 +135,10 @@ public final class EditorStateWriter {
         }
 
         JsonObject track = new JsonObject();
-        track.addProperty("keyframeType", "camera");
+        // Идентификатор типа в реестре Flashback — заглавными. Строчное "camera" внутри
+        // самого кадра к делу не относится: там поле "type", и при чтении оно не смотрится.
+        // Промах здесь роняет загрузку всего файла на requireNonNull в KeyframeRegistry.
+        track.addProperty("keyframeType", "CAMERA");
         track.add("keyframesByTick", byTick);
         track.addProperty("enabled", true);
         track.addProperty("customName", style.displayName());
