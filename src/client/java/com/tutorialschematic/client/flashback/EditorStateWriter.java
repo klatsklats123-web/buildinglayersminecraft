@@ -61,6 +61,10 @@ public final class EditorStateWriter {
         scene.add("keyframeTracks", trackArray);
         scene.addProperty("exportStartTicks", -1);
         scene.addProperty("exportEndTicks", -1);
+        // Пустая история обязательна. У EditorScene нет конструктора без аргументов,
+        // поэтому Gson собирает его в обход инициализаторов полей: не напишем историю
+        // здесь — она останется null, и редактор упадёт на первой же правке кадра.
+        scene.add("history", emptyHistory());
 
         JsonArray scenes = new JsonArray();
         scenes.add(scene);
@@ -79,6 +83,13 @@ public final class EditorStateWriter {
             TutorialSchematicMod.LOGGER.error("Не удалось записать камеры: {}", e.getMessage());
             return null;
         }
+    }
+
+    private static JsonObject emptyHistory() {
+        JsonObject history = new JsonObject();
+        history.add("entries", new JsonArray());
+        history.addProperty("position", 0);
+        return history;
     }
 
     private static JsonObject track(ShotStyle style, List<CameraShot> shots) {
