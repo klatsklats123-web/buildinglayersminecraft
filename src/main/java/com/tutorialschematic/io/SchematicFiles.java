@@ -48,7 +48,7 @@ public final class SchematicFiles {
 
     public static final String EXTENSION = ".ltutorial";
     /** Версия формата. Повышать при несовместимых изменениях. */
-    public static final int FORMAT_VERSION = 3;
+    public static final int FORMAT_VERSION = 4;
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
@@ -201,6 +201,18 @@ public final class SchematicFiles {
         root.addProperty("author", schematic.author());
         root.addProperty("created", schematic.created());
 
+        // Абсолютный угол постройки. Без него схема при открытии ложилась в начало
+        // координат мира — за тысячи блоков от того места, где её размечали, и выглядело
+        // это как «сохранение потерялось».
+        JsonArray originJson = new JsonArray();
+        originJson.add(origin.getX());
+        originJson.add(origin.getY());
+        originJson.add(origin.getZ());
+        root.add("origin", originJson);
+        if (!schematic.dimension().isEmpty()) {
+            root.addProperty("dimension", schematic.dimension());
+        }
+
         JsonArray sizeJson = new JsonArray();
         for (int value : size) {
             sizeJson.add(value);
@@ -225,8 +237,15 @@ public final class SchematicFiles {
 
     // ---- чтение ----
 
-    /** Загружает схему, размещая её минимальный угол в точке {@code origin}. */
-    public static TutorialSchematic load(String fileName, BlockPos origin) throws IOException {
+    /**
+     * Загружает схему.
+     *
+     * @param origin куда положить минимальный угол; {@code null} означает «туда, где
+     *               она и была размечена» — это обычный случай, ради него в файле и
+     *               хранится абсолютный угол
+     */
+    public static TutorialSchematic load(String fileName, @org.jetbrains.annotations.Nullable BlockPos origin)
+            throws IOException {
         Path path = pathFor(fileName);
         if (!Files.exists(path)) {
             throw new IOException("Файл не найден: " + path.getFileName());
@@ -238,14 +257,19 @@ public final class SchematicFiles {
         return fromJson(root, origin);
     }
 
-    public static TutorialSchematic fromJson(JsonObject root, BlockPos origin) throws IOException {
+    public static TutorialSchematic fromJson(JsonObject root, @org.jetbrains.annotations.Nullable BlockPos origin)
+            throws IOException {
         int format = root.has("format") ? root.get("format").getAsInt() : 1;
         if (format > FORMAT_VERSION) {
             throw new IOException("Файл сделан более новой версией мода (формат " + format + ")");
         }
 
+        if (origin == null) {
+            origin = readOrigin(root);
+        }
         TutorialSchematic schematic = new TutorialSchematic(
                 root.has("name") ? root.get("name").getAsString() : "Без названия");
+        if (root.has("dimension")) schematic.setDimension(root.get("dimension").getAsString());
         if (root.has("author")) schematic.setAuthor(root.get("author").getAsString());
         if (root.has("created")) schematic.setCreated(root.get("created").getAsString());
 
@@ -329,6 +353,18 @@ public final class SchematicFiles {
             schematic.addLayerRaw(layer);
         }
         return schematic;
+    }
+
+    /** Угол, в котором схему размечали. У файлов старого формата его нет — там начало координат. */
+    private static BlockPos readOrigin(JsonObject root) {
+        if (!root.has("origin")) {
+            return BlockPos.ZERO;
+        }
+        JsonArray json = root.getAsJsonArray("origin");
+        if (json.size() < 3) {
+            return BlockPos.ZERO;
+        }
+        return new BlockPos(json.get(0).getAsInt(), json.get(1).getAsInt(), json.get(2).getAsInt());
     }
 
     /** Убирает из имени символы, недопустимые в имени файла. */

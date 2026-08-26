@@ -128,11 +128,12 @@ public class OpenSchematicScreen extends Screen {
 
     private void open(String fileName) {
         try {
-            // Загружаем в начало координат: разметка велась в мировых координатах,
-            // но для правки формул и порядка слоёв положение в мире не важно.
-            TutorialSchematic schematic = SchematicFiles.load(fileName, BlockPos.ZERO);
+            // null — «положить туда, где размечали»: абсолютный угол лежит в файле,
+            // иначе схема оказывалась в начале координат мира, за тысячи блоков отсюда.
+            TutorialSchematic schematic = SchematicFiles.load(fileName, null);
             EditorState.get().openSchematic(schematic, fileName);
             EditorState.info("Открыто: " + schematic);
+            EditorState.get().warnIfForeignWorld(schematic);
             minecraft.setScreenAndShow(new MainMenuScreen());
         } catch (Exception e) {
             EditorState.error("Не удалось открыть: " + e.getMessage());

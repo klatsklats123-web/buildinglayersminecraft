@@ -517,9 +517,10 @@ public final class EditorCommands {
 
     private static int open(String file) {
         try {
-            TutorialSchematic schematic = SchematicFiles.load(file, BlockPos.ZERO);
+            TutorialSchematic schematic = SchematicFiles.load(file, null);
             EditorState.get().openSchematic(schematic, file);
             EditorState.info("Открыто: " + schematic);
+            EditorState.get().warnIfForeignWorld(schematic);
             return 1;
         } catch (Exception e) {
             EditorState.error("Не удалось открыть: " + e.getMessage());

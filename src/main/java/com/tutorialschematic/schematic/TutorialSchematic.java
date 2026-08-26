@@ -21,6 +21,11 @@ public class TutorialSchematic {
     private String name;
     private String author = "";
     private String created = "";
+    /**
+     * Мир, в котором велась разметка. Нужен только чтобы предупредить, если схему
+     * открывают не там: координаты у неё мировые, и в другом мире они бессмысленны.
+     */
+    private String dimension = "";
 
     private final List<BuildLayer> layers = new ArrayList<>();
     private int nextLayerId = 1;
@@ -49,6 +54,14 @@ public class TutorialSchematic {
 
     public String created() {
         return created;
+    }
+
+    public String dimension() {
+        return dimension;
+    }
+
+    public void setDimension(String dimension) {
+        this.dimension = dimension == null ? "" : dimension;
     }
 
     public void setCreated(String created) {

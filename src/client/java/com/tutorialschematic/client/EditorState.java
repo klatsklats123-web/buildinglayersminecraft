@@ -67,6 +67,7 @@ public final class EditorState {
     public TutorialSchematic createSchematic(String name) {
         this.schematic = new TutorialSchematic(name);
         this.schematic.setAuthor(Minecraft.getInstance().getUser().getName());
+        this.schematic.setDimension(currentDimension());
         this.fileName = SchematicFiles.sanitize(name) + SchematicFiles.EXTENSION;
         this.activeLayer = null;
         this.boxCorner = null;
@@ -96,6 +97,9 @@ public final class EditorState {
         if (schematic == null) {
             error("Нет открытой схемы");
             return null;
+        }
+        if (schematic.dimension().isEmpty()) {
+            schematic.setDimension(currentDimension());
         }
         try {
             Path path = SchematicFiles.save(schematic, fileName);
@@ -195,6 +199,24 @@ public final class EditorState {
 
     public void setAutoClear(boolean value) {
         this.autoClear = value;
+    }
+
+    /** Измерение, в котором игрок сейчас находится. Пустая строка, если мир не загружен. */
+    public static String currentDimension() {
+        Minecraft client = Minecraft.getInstance();
+        return client.level == null ? "" : client.level.dimension().identifier().toString();
+    }
+
+    /**
+     * Предупреждает, если схему открыли не в том мире, где размечали. Координаты у неё
+     * мировые, поэтому в чужом мире постройка окажется неизвестно где.
+     */
+    public void warnIfForeignWorld(TutorialSchematic opened) {
+        String here = currentDimension();
+        String there = opened.dimension();
+        if (!there.isEmpty() && !here.isEmpty() && !there.equals(here)) {
+            error("Схему размечали в другом мире (" + there + ") — координаты здесь не совпадут");
+        }
     }
 
     /** Все блоки схемы — для быстрой проверки «этот блок уже размечен». */

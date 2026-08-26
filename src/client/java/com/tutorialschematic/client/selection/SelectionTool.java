@@ -47,6 +47,13 @@ public final class SelectionTool {
      * одной рамкой, без поблочной заливки.
      */
     private static final int PREVIEW_LIMIT = 4096;
+    /**
+     * Радиус захвата «магнита» в блоках. Ограничение обязательно: без него один клик по
+     * камню собрал бы половину горы.
+     */
+    private static final int MAGNET_RADIUS = 20;
+    /** Потолок «магнита» по числу блоков за клик. */
+    private static final int MAGNET_LIMIT = 8192;
 
     private SelectionTool() {
     }
@@ -150,6 +157,7 @@ public final class SelectionTool {
         return switch (state.mode()) {
             case SINGLE, TWO_POINTS -> List.of(target);
             case FLOOD -> flood(level, target);
+            case MATERIAL -> sameMaterialAround(level, target);
         };
     }
 
@@ -372,6 +380,40 @@ public final class SelectionTool {
             EditorState.error("Заливка остановлена на " + FLOOD_LIMIT + " блоках — область слишком большая");
         }
         return new ArrayList<>(visited);
+    }
+
+    /**
+     * «Магнит»: все блоки того же материала вокруг, <b>без учёта связности</b>.
+     *
+     * <p>Заливка идёт по соседям и останавливается на чужом блоке: если дубовые брёвна
+     * разделены берёзовыми, до дальних дуб не доберётся. Здесь связность не важна —
+     * берём всё того же типа в пределах радиуса, поэтому оба конца попадут в слой сразу.
+     *
+     * <p>Сравнивается именно блок, а не полное состояние: иначе брёвна разной ориентации
+     * или ступеньки разного поворота считались бы разными материалами.
+     */
+    private static List<BlockPos> sameMaterialAround(Level level, BlockPos target) {
+        BlockState startState = level.getBlockState(target);
+        if (startState.isAir()) {
+            return List.of();
+        }
+        List<BlockPos> found = new ArrayList<>();
+        for (int dx = -MAGNET_RADIUS; dx <= MAGNET_RADIUS; dx++) {
+            for (int dy = -MAGNET_RADIUS; dy <= MAGNET_RADIUS; dy++) {
+                for (int dz = -MAGNET_RADIUS; dz <= MAGNET_RADIUS; dz++) {
+                    BlockPos pos = target.offset(dx, dy, dz);
+                    if (level.getBlockState(pos).is(startState.getBlock())) {
+                        found.add(pos);
+                        if (found.size() >= MAGNET_LIMIT) {
+                            EditorState.error("Магнит остановлен на " + MAGNET_LIMIT
+                                    + " блоках — слишком много такого материала вокруг");
+                            return found;
+                        }
+                    }
+                }
+            }
+        }
+        return found;
     }
 
     /** Все непустые блоки в коробке между двумя углами включительно. */

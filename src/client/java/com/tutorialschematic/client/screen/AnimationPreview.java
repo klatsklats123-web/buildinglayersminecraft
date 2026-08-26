@@ -1,6 +1,7 @@
 package com.tutorialschematic.client.screen;
 
 import com.tutorialschematic.client.EditorState;
+import com.tutorialschematic.client.build.BuildRunner;
 import com.tutorialschematic.order.Pos;
 import com.tutorialschematic.schematic.BuildLayer;
 import com.tutorialschematic.schematic.BlockData;
@@ -43,6 +44,7 @@ public final class AnimationPreview {
 
     private long animationStart = System.currentTimeMillis();
     private boolean playing = true;
+    /** Собственный множитель превью поверх скорости постройки. Обычно единица. */
     private double speed = 1.0;
 
     /** Кэш проекции: пересчитывается только при повороте или смене данных. */
@@ -265,7 +267,9 @@ public final class AnimationPreview {
             return totalSteps;
         }
         int ticksPerStep = layer == null ? 2 : Math.max(1, layer.order().ticksPerStep());
-        double secondsPerStep = ticksPerStep / 20.0 / speed;
+        // Скорость берём у самой постройки, а не свою: иначе превью показывает один темп,
+        // а строится в другом, и подобранная по превью анимация не совпадает с записью.
+        double secondsPerStep = ticksPerStep / 20.0 / (speed * BuildRunner.get().speedMultiplier());
         double elapsed = (System.currentTimeMillis() - animationStart) / 1000.0;
 
         double total = totalSteps * secondsPerStep;
