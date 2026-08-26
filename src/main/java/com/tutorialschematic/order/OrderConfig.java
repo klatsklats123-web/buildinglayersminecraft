@@ -24,6 +24,12 @@ public final class OrderConfig {
     private final List<SortKey> keys = new ArrayList<>();
     private int batchSize = 1;
     private int ticksPerStep = 2;
+    /**
+     * Резать ли шаги по фронту, а не по счёту. Включено — за шаг встают все блоки с
+     * одинаковым значением формулы, и ширину шага задаёт сама фигура: нитка раздвоилась,
+     * значит и блоков за шаг стало два. Выключено — ровно {@code batchSize} блоков.
+     */
+    private boolean frontStep;
     private long seed = 12345L;
 
     public OrderConfig() {
@@ -89,6 +95,14 @@ public final class OrderConfig {
     }
 
     /** Пауза между шагами в игровых тиках (20 тиков = 1 секунда). */
+    public boolean frontStep() {
+        return frontStep;
+    }
+
+    public void setFrontStep(boolean frontStep) {
+        this.frontStep = frontStep;
+    }
+
     public int ticksPerStep() {
         return ticksPerStep;
     }
@@ -154,6 +168,7 @@ public final class OrderConfig {
         }
         copy.batchSize = batchSize;
         copy.ticksPerStep = ticksPerStep;
+        copy.frontStep = frontStep;
         copy.seed = seed;
         return copy;
     }
@@ -167,6 +182,7 @@ public final class OrderConfig {
         json.add("keys", array);
         json.addProperty("batchSize", batchSize);
         json.addProperty("ticksPerStep", ticksPerStep);
+        json.addProperty("frontStep", frontStep);
         json.addProperty("seed", seed);
         return json;
     }
@@ -184,6 +200,7 @@ public final class OrderConfig {
         }
         if (json.has("batchSize")) config.setBatchSize(json.get("batchSize").getAsInt());
         if (json.has("ticksPerStep")) config.setTicksPerStep(json.get("ticksPerStep").getAsInt());
+        if (json.has("frontStep")) config.setFrontStep(json.get("frontStep").getAsBoolean());
         if (json.has("seed")) config.seed = json.get("seed").getAsLong();
         return config;
     }

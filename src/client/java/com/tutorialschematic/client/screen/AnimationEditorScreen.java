@@ -199,6 +199,33 @@ public class AnimationEditorScreen extends Screen {
         });
         pauseBox = numberBox(midX + 76, rowY + 48, boxWidth, layer.pauseAfterTicks(), layer::setPauseAfterTicks);
 
+        // Кнопка рядом с размером пачки, потому что она его и отменяет: включённая
+        // резка по фронту делает число блоков за шаг переменным.
+        Button frontStep = Button.builder(
+                        Component.literal(order.frontStep() ? "Шаг: по фронту" : "Шаг: по счёту"),
+                        b -> {
+                            order.setFrontStep(!order.frontStep());
+                            layer.invalidateOrder();
+                            preview.refresh();
+                            rebuildWidgets();
+                        })
+                .bounds(midX + 140, rowY, 90, 18)
+                .tooltip(Tooltip.create(Component.literal(
+                        "По счёту — ровно столько блоков за шаг, сколько слева.\n\n"
+                                + "По фронту — за шаг встают все блоки с одинаковым значением "
+                                + "формулы, и ширину задаёт сама фигура: нитка раздвоилась — "
+                                + "пошло по два блока, ветки сошлись — снова по одному.\n\n"
+                                + "Для d и y это то, что нужно. У дробных формул совпадений "
+                                + "почти не бывает, и шаг выходит в один блок.")))
+                .build();
+        addRenderableWidget(frontStep);
+
+        if (batchBox != null) {
+            // при резке по фронту размер пачки ни на что не влияет — гасим, чтобы
+            // не подкручивали число, от которого ничего не зависит
+            batchBox.setEditable(!order.frontStep());
+        }
+
         addRenderableWidget(Button.builder(Component.literal("Другое семя"), b -> {
                     order.rerollSeed();
                     layer.invalidateOrder();

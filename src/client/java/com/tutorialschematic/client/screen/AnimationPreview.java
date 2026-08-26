@@ -76,9 +76,19 @@ public final class AnimationPreview {
             return;
         }
 
-        List<Pos> full = layer.orderedPositions();
-        int batch = Math.max(1, layer.order().batchSize());
-        totalSteps = (full.size() + batch - 1) / batch;
+        // Номер шага берём из самой раскадровки, а не делением на размер пачки:
+        // при резке по фронту ширина шага переменная, и делением её не угадать.
+        List<List<Pos>> layerSteps = layer.steps();
+        totalSteps = layerSteps.size();
+
+        List<Pos> full = new ArrayList<>();
+        List<Integer> stepIndex = new ArrayList<>();
+        for (int step = 0; step < layerSteps.size(); step++) {
+            for (Pos pos : layerSteps.get(step)) {
+                full.add(pos);
+                stepIndex.add(step);
+            }
+        }
 
         // Прореживаем равномерно по очереди, а не по координатам: так порядок
         // постройки в превью остаётся честным, просто с меньшей детализацией.
@@ -91,7 +101,7 @@ public final class AnimationPreview {
                 break;
             }
             sampled.add(full.get(i));
-            steps[written++] = i / batch;
+            steps[written++] = stepIndex.get(i);
         }
         this.ordered = sampled;
         this.stepOfBlock = steps;

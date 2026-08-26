@@ -55,6 +55,7 @@ public class BuildLayer {
     private boolean visible = true;
 
     private transient List<Pos> cachedOrder;
+    private transient List<List<Pos>> cachedSteps;
 
     public BuildLayer(int id, String name) {
         this.id = id;
@@ -227,9 +228,18 @@ public class BuildLayer {
         seeds.add(pos.immutable());
     }
 
+    private List<Pos> seedPositions() {
+        List<Pos> result = new ArrayList<>(seeds.size());
+        for (BlockPos pos : seeds) {
+            result.add(new Pos(pos.getX(), pos.getY(), pos.getZ()));
+        }
+        return result;
+    }
+
     /** Сбрасывает кэш очереди. Вызывать после правки блоков или формул. */
     public void invalidateOrder() {
         cachedOrder = null;
+        cachedSteps = null;
     }
 
     /**
@@ -255,19 +265,46 @@ public class BuildLayer {
         for (BlockPos pos : blocks.keySet()) {
             source.add(new Pos(pos.getX(), pos.getY(), pos.getZ()));
         }
-        List<Pos> seedPositions = new ArrayList<>(seeds.size());
-        for (BlockPos pos : seeds) {
-            seedPositions.add(new Pos(pos.getX(), pos.getY(), pos.getZ()));
-        }
-        List<Pos> ordered = BlockOrderer.order(source, order, seedPositions);
+        List<Pos> ordered = BlockOrderer.order(source, order, seedPositions());
         cachedOrder = ordered;
         return ordered;
     }
 
-    /** Сколько шагов анимации займёт слой при текущем размере пачки. */
+    /**
+     * Раскадровка слоя: список шагов, в каждом — блоки, встающие одновременно. Ширина
+     * шага зависит от режима: постоянная по счёту или переменная по фронту.
+     */
+    public List<List<Pos>> steps() {
+        List<List<Pos>> cached = cachedSteps;
+        if (cached != null) {
+            return cached;
+        }
+        List<Pos> source = new ArrayList<>(blocks.size());
+        for (BlockPos pos : blocks.keySet()) {
+            source.add(new Pos(pos.getX(), pos.getY(), pos.getZ()));
+        }
+        List<List<Pos>> computed = BlockOrderer.orderIntoSteps(source, order, seedPositions());
+        cachedSteps = computed;
+        return computed;
+    }
+
+    /** Та же раскадровка, но в мировых координатах — для исполнителя постройки. */
+    public List<List<BlockPos>> buildSteps() {
+        List<List<Pos>> source = steps();
+        List<List<BlockPos>> result = new ArrayList<>(source.size());
+        for (List<Pos> step : source) {
+            List<BlockPos> converted = new ArrayList<>(step.size());
+            for (Pos pos : step) {
+                converted.add(new BlockPos(pos.x(), pos.y(), pos.z()));
+            }
+            result.add(converted);
+        }
+        return result;
+    }
+
+    /** Сколько шагов анимации займёт слой при текущих настройках. */
     public int stepCount() {
-        int batch = Math.max(1, order.batchSize());
-        return (blocks.size() + batch - 1) / batch;
+        return steps().size();
     }
 
     /** Примерная длительность слоя в секундах при текущих настройках скорости. */

@@ -36,9 +36,23 @@ public final class BlockOrderer {
      * @param seeds блоки, от которых пойдёт обход; пустой список означает «снизу»
      */
     public static List<Pos> order(Collection<Pos> blocks, OrderConfig config, List<Pos> seeds) {
+        return computeOrder(blocks, config, seeds).positions();
+    }
+
+    /**
+     * Отсортированные блоки вместе с их ключами. Ключи нужны раскадровке «по фронту»:
+     * шаг там — это группа блоков с совпавшими ключами, а не фиксированное их число.
+     *
+     * @param keys ключ каждого блока по уровням сортировки, либо {@code null},
+     *             если все формулы сломаны и порядок пришлось взять запасной
+     */
+    private record Ordered(List<Pos> positions, double[][] keys) {
+    }
+
+    private static Ordered computeOrder(Collection<Pos> blocks, OrderConfig config, List<Pos> seeds) {
         List<Pos> list = new ArrayList<>(blocks);
         if (list.size() <= 1) {
-            return list;
+            return new Ordered(list, keysOf(list));
         }
         list.sort(STABLE);
 
@@ -52,7 +66,7 @@ public final class BlockOrderer {
         }
         if (formulas.isEmpty()) {
             // все формулы сломаны — отдаём хотя бы предсказуемый порядок
-            return list;
+            return new Ordered(list, null);
         }
 
         int n = list.size();
@@ -113,8 +127,59 @@ public final class BlockOrderer {
         });
 
         List<Pos> result = new ArrayList<>(n);
-        for (int index : indices) {
+        double[][] sortedKeys = new double[n][];
+        for (int i = 0; i < n; i++) {
+            int index = indices[i];
             result.add(list.get(index));
+            sortedKeys[i] = java.util.Arrays.copyOfRange(keys, index * depth, index * depth + depth);
+        }
+        return new Ordered(result, sortedKeys);
+    }
+
+    /** Ключи-заглушки для вырожденного случая: каждый блок сам себе фронт. */
+    private static double[][] keysOf(List<Pos> list) {
+        double[][] keys = new double[list.size()][];
+        for (int i = 0; i < list.size(); i++) {
+            keys[i] = new double[]{i};
+        }
+        return keys;
+    }
+
+    /**
+     * Готовая раскадровка слоя: список шагов, в каждом — блоки, встающие одновременно.
+     *
+     * <p>Два способа резать, и выбирает между ними {@link OrderConfig#frontStep()}:
+     *
+     * <ul>
+     *   <li><b>по счёту</b> — ровно {@code batchSize} блоков за шаг. Темп постоянный,
+     *       но фигура на него не влияет;</li>
+     *   <li><b>по фронту</b> — за шаг встают все блоки с <b>одинаковым значением формулы</b>.
+     *       Ширину шага задаёт сама постройка: пока фронт идёт одной ниткой, за шаг
+     *       встаёт один блок; раздвоился — два; сошлись обратно — снова один. Именно это
+     *       нужно, когда волна ветвится по конструкции.</li>
+     * </ul>
+     *
+     * <p>Значения сравниваются точно, без допуска. Для {@code d}, {@code y}, {@code r}
+     * это ровно то, что нужно — там равные значения и означают «один фронт». А у дробных
+     * формул вроде {@code x + sin(z*40)*3} совпадений почти не бывает, и режим честно
+     * вырождается в один блок за шаг, а не склеивает случайно близкое.
+     */
+    public static List<List<Pos>> orderIntoSteps(Collection<Pos> blocks, OrderConfig config, List<Pos> seeds) {
+        Ordered ordered = computeOrder(blocks, config, seeds);
+        if (!config.frontStep() || ordered.keys() == null) {
+            return steps(ordered.positions(), config);
+        }
+
+        List<List<Pos>> result = new ArrayList<>();
+        List<Pos> positions = ordered.positions();
+        double[][] keys = ordered.keys();
+
+        int start = 0;
+        for (int i = 1; i <= positions.size(); i++) {
+            if (i == positions.size() || !java.util.Arrays.equals(keys[i - 1], keys[i])) {
+                result.add(new ArrayList<>(positions.subList(start, i)));
+                start = i;
+            }
         }
         return result;
     }
