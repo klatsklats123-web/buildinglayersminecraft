@@ -2,6 +2,9 @@ package com.tutorialschematic.client.screen;
 
 import com.tutorialschematic.client.EditorState;
 import com.tutorialschematic.client.build.BuildRunner;
+import com.tutorialschematic.client.flashback.CameraExport;
+import com.tutorialschematic.client.flashback.FlashbackBridge;
+import com.tutorialschematic.client.flashback.RecordedBuild;
 import com.tutorialschematic.client.selection.SelectionWand;
 import com.tutorialschematic.io.SchematicFiles;
 import com.tutorialschematic.schematic.BuildLayer;
@@ -267,6 +270,39 @@ public class MainMenuScreen extends Screen {
                 .build();
         start.active = has;
         addRenderableWidget(start);
+
+        y += 22;
+        boolean flashback = FlashbackBridge.isAvailable();
+
+        Button record = Button.builder(Component.literal("● Запустить с записью"), b -> {
+                    if (RecordedBuild.startRecordingThenBuild()) {
+                        onClose();
+                    }
+                })
+                .bounds(x, y, halfWidth, 18)
+                .tooltip(Tooltip.create(Component.literal(flashback
+                        ? "Включает запись Flashback, дожидается слепка мира и только потом "
+                                + "начинает строить — иначе начало постройки в реплей не попадёт.\n\n"
+                                + "По ходу расставляет метки по слоям."
+                        : "Flashback не установлен")))
+                .build();
+        record.active = has && flashback;
+        addRenderableWidget(record);
+
+        Button cameras = Button.builder(Component.literal("Расставить камеры"), b -> {
+                    CameraExport.exportForNewestReplay();
+                    rebuildWidgets();
+                })
+                .bounds(x + halfWidth + 4, y, halfWidth, 18)
+                .tooltip(Tooltip.create(Component.literal(flashback
+                        ? "Читает свежий реплей и раскладывает по нему дорожки камер: "
+                                + "дальний, средний, ближний и два пролёта.\n\n"
+                                + "Запись должна быть уже остановлена — пока она идёт, реплей "
+                                + "не дописан."
+                        : "Flashback не установлен")))
+                .build();
+        cameras.active = has && flashback;
+        addRenderableWidget(cameras);
 
         y += 22;
         Button pause = Button.builder(

@@ -3,6 +3,7 @@ package com.tutorialschematic.client;
 import com.tutorialschematic.TutorialSchematicMod;
 import com.tutorialschematic.client.build.BuildRunner;
 import com.tutorialschematic.client.command.EditorCommands;
+import com.tutorialschematic.client.flashback.RecordedBuild;
 import com.tutorialschematic.client.render.EditorHud;
 import com.tutorialschematic.client.render.WorldHighlightRenderer;
 import com.tutorialschematic.client.selection.SelectionMode;
@@ -46,6 +47,7 @@ public class TutorialSchematicClient implements ClientModInitializer {
         EditorHud.register();
         EditorCommands.register();
         BuildRunner.register();
+        RecordedBuild.register();
         Keybinds.register();
         registerMarkupInput();
         registerDecorationInput();

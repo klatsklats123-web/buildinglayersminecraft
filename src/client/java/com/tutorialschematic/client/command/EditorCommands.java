@@ -6,6 +6,8 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.tutorialschematic.client.EditorState;
 import com.tutorialschematic.client.build.BuildRunner;
+import com.tutorialschematic.client.flashback.CameraExport;
+import com.tutorialschematic.client.flashback.RecordedBuild;
 import com.tutorialschematic.client.screen.AnimationEditorScreen;
 import com.tutorialschematic.client.selection.SelectionMode;
 import com.tutorialschematic.client.selection.SelectionTool;
@@ -189,6 +191,16 @@ public final class EditorCommands {
                             EditorState state = EditorState.get();
                             state.setHighlightsVisible(!state.highlightsVisible());
                             EditorState.info("Подсветка: " + (state.highlightsVisible() ? "вкл" : "выкл"));
+                            return 1;
+                        }))
+                .then(ClientCommands.literal("record")
+                        .executes(ctx -> {
+                            RecordedBuild.startRecordingThenBuild();
+                            return 1;
+                        }))
+                .then(ClientCommands.literal("cameras")
+                        .executes(ctx -> {
+                            CameraExport.exportForNewestReplay();
                             return 1;
                         }))
                 .then(ClientCommands.literal("autoclear")
