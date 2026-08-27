@@ -5,6 +5,7 @@ import com.tutorialschematic.order.Pos;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.HashSet;
 import java.util.Set;
 
 /**
@@ -50,6 +51,17 @@ public final class ShotPlanner {
      * работой — суммарный угол между кадрами всегда больше заданной дуги.
      */
     private static final double MAX_ARC_PER_STEP = 30;
+
+    /**
+     * Во сколько раз пробуем подойти ближе, если снаружи слой не виден.
+     *
+     * <p>Интерьер, обнесённый уже готовыми стенами, снаружи не виден ни с какой стороны.
+     * Единственный выход — подойти ближе, вплоть до того, чтобы оказаться внутри. Идём от
+     * задуманной крупности к самой тесной и берём ближайшую только ради видимости.
+     */
+    private static final double[] DISTANCE_TRIES = {1.0, 0.72, 0.5, 0.34, 0.22};
+    /** Штраф за каждый шаг сближения: задуманную крупность бросаем неохотно. */
+    private static final double CLOSER_PENALTY = 0.35;
 
     /** На сколько градусов поднимаем камеру над плоским слоем. */
     private static final double FLAT_LIFT = 25;
@@ -113,26 +125,35 @@ public final class ShotPlanner {
         double bestScore = Double.NEGATIVE_INFINITY;
         double bestAzimuth = 45;
         double bestElevation = (minElevation + maxElevation) / 2;
+        double bestDistance = distance;
 
-        for (int a = 0; a < AZIMUTH_STEPS; a++) {
-            double azimuth = a * 360.0 / AZIMUTH_STEPS;
-            for (int e = 0; e < ELEVATION_STEPS; e++) {
-                double elevation = minElevation
-                        + e * (maxElevation - minElevation) / (ELEVATION_STEPS - 1);
+        for (int d = 0; d < DISTANCE_TRIES.length; d++) {
+            double tryDistance = distance * DISTANCE_TRIES[d];
+            double closerPenalty = CLOSER_PENALTY * d;
 
-                double visibility = visibilityAcross(center, distance, azimuth, elevation, sampled);
-                double score = visibility * VISIBILITY_WEIGHT
-                        + threeQuarterScore(azimuth + style.sideOffset())
-                        + elevationScore(elevation, minElevation, maxElevation)
-                        + turnScore(azimuth, previousAzimuth);
+            for (int a = 0; a < AZIMUTH_STEPS; a++) {
+                double azimuth = a * 360.0 / AZIMUTH_STEPS;
+                for (int e = 0; e < ELEVATION_STEPS; e++) {
+                    double elevation = minElevation
+                            + e * (maxElevation - minElevation) / (ELEVATION_STEPS - 1);
 
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestAzimuth = azimuth;
-                    bestElevation = elevation;
+                    double visibility = visibilityAcross(tryDistance, azimuth, elevation, sampled, style);
+                    double score = visibility * VISIBILITY_WEIGHT
+                            + threeQuarterScore(azimuth + style.sideOffset())
+                            + elevationScore(elevation, minElevation, maxElevation)
+                            + turnScore(azimuth, previousAzimuth)
+                            - closerPenalty;
+
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestAzimuth = azimuth;
+                        bestElevation = elevation;
+                        bestDistance = tryDistance;
+                    }
                 }
             }
         }
+        distance = bestDistance;
         return place(center, radius, distance, bestAzimuth, bestElevation, tick);
     }
 
@@ -142,18 +163,19 @@ public final class ShotPlanner {
      * <p>Именно худшая, а не средняя: направление, из которого в конце слоя не видно
      * ничего, не спасает то, что в начале было видно всё.
      */
-    private static double visibilityAcross(double[] center, double distance, double azimuth,
-                                           double elevation, List<VisibilityCheck> checks) {
+    private static double visibilityAcross(double distance, double azimuth, double elevation,
+                                           List<VisibilityCheck> checks, ShotStyle style) {
         if (checks.isEmpty()) {
             return 1;
         }
         double worst = 1;
         for (VisibilityCheck check : checks) {
-            double[] camera = CameraFraming.positionAround(
-                    centerOf(check.targets()), distance, azimuth, elevation);
-            // камера стоит вокруг своего куска, но проверяем именно его видимость
-            worst = Math.min(worst,
-                    Occlusion.visibleFraction(camera, check.targets(), check.occluders()));
+            // Камеру ставим там, где она реально окажется: у ведущих доктрин это точка
+            // вокруг самой работы, у статичных — вокруг центра слоя. Иначе проверяли бы
+            // видимость из одного места, а снимали из другого.
+            double[] aim = centerOf(check.targets());
+            double[] camera = CameraFraming.positionAround(aim, distance, azimuth, elevation);
+            worst = Math.min(worst, Occlusion.visibleFraction(camera, check.targets(), check.occluders()));
         }
         return worst;
     }
@@ -245,39 +267,6 @@ public final class ShotPlanner {
         return 1.0 - offset / 45.0;
     }
 
-    /** Середина диапазона высот лучше краёв: у самых границ планы однообразны. */
-    private static double elevationScore(double elevation, double minElevation, double maxElevation) {
-        double middle = (minElevation + maxElevation) / 2;
-        double half = Math.max(1.0e-6, (maxElevation - minElevation) / 2);
-        return 0.6 * (1.0 - Math.abs(elevation - middle) / half);
-    }
-
-    /**
-     * Насколько слой плоский: 1 — горизонтальный лист вроде пола, 0 — стена или объёмный кусок.
-     *
-     * <p>Считается по отношению высоты к большей из горизонтальных сторон. Половина и выше
-     * означает, что слой достаточно вертикален и поднимать камеру незачем.
-     */
-    static double flatness(Collection<Pos> blocks) {
-        if (blocks.isEmpty()) {
-            return 0;
-        }
-        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
-        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
-        for (Pos pos : blocks) {
-            minX = Math.min(minX, pos.x());
-            minY = Math.min(minY, pos.y());
-            minZ = Math.min(minZ, pos.z());
-            maxX = Math.max(maxX, pos.x());
-            maxY = Math.max(maxY, pos.y());
-            maxZ = Math.max(maxZ, pos.z());
-        }
-        double vertical = maxY - minY + 1;
-        double horizontal = Math.max(maxX - minX + 1, maxZ - minZ + 1);
-        double ratio = vertical / Math.max(1.0, horizontal);
-        return Math.max(0.0, Math.min(1.0, 1.0 - ratio * 2.0));
-    }
-
     /** Разворот от предыдущего плана: слишком малый — рывок, слишком большой — перескок через ось. */
     static double turnScore(double azimuth, double previousAzimuth) {
         if (Double.isNaN(previousAzimuth)) {
@@ -296,6 +285,48 @@ public final class ShotPlanner {
     /** Кратчайший разворот в градусах, от -180 до 180. */
     static double shortestTurn(double degrees) {
         return ((degrees % 360) + 540) % 360 - 180;
+    }
+
+    /** Середина диапазона высот лучше краёв: у самых границ планы однообразны. */
+    private static double elevationScore(double elevation, double minElevation, double maxElevation) {
+        double middle = (minElevation + maxElevation) / 2;
+        double half = Math.max(1.0e-6, (maxElevation - minElevation) / 2);
+        return 0.6 * (1.0 - Math.abs(elevation - middle) / half);
+    }
+
+    /**
+     * Насколько слой плоский: 1 — горизонтальный лист вроде пола, 0 — стена, кольцо стен
+     * или объёмный кусок.
+     *
+     * <p>Одного габарита мало, и это было настоящей ошибкой: кольцо стен высотой в три
+     * блока на стороне в двенадцать по габариту неотличимо от плиты, и камера над ним
+     * поднималась как над полом. Поэтому к отношению высоты добавлен второй множитель —
+     * <b>насколько плотно занят пол габарита</b>. У плиты он около единицы, у кольца стен
+     * около четверти, и подъём для кольца почти исчезает.
+     */
+    static double flatness(Collection<Pos> blocks) {
+        if (blocks.isEmpty()) {
+            return 0;
+        }
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+        Set<Long> footprint = new HashSet<>();
+        for (Pos pos : blocks) {
+            minX = Math.min(minX, pos.x());
+            minY = Math.min(minY, pos.y());
+            minZ = Math.min(minZ, pos.z());
+            maxX = Math.max(maxX, pos.x());
+            maxY = Math.max(maxY, pos.y());
+            maxZ = Math.max(maxZ, pos.z());
+            footprint.add(((long) pos.x() << 32) ^ (pos.z() & 0xFFFFFFFFL));
+        }
+        double vertical = maxY - minY + 1;
+        double horizontal = Math.max(maxX - minX + 1, maxZ - minZ + 1);
+        double area = (double) (maxX - minX + 1) * (maxZ - minZ + 1);
+
+        double lowness = Math.max(0.0, Math.min(1.0, 1.0 - vertical / Math.max(1.0, horizontal) * 2.0));
+        double fill = area <= 0 ? 0 : Math.min(1.0, footprint.size() / area);
+        return lowness * fill;
     }
 
     static double[] centerOf(Collection<Pos> blocks) {

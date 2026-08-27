@@ -323,6 +323,69 @@ class ShotPlannerTest {
         return Math.toDegrees(Math.atan2(shot.x() - center[0], shot.z() - center[2]));
     }
 
+    /** Кольцо стен: четыре стороны по периметру, высота небольшая. */
+    private static List<Pos> wallRing(int side, int height) {
+        List<Pos> blocks = new ArrayList<>();
+        for (int x = 0; x < side; x++) {
+            for (int z = 0; z < side; z++) {
+                if (x != 0 && x != side - 1 && z != 0 && z != side - 1) {
+                    continue;
+                }
+                for (int y = 0; y < height; y++) {
+                    blocks.add(new Pos(x, y, z));
+                }
+            }
+        }
+        return blocks;
+    }
+
+    @Test
+    void кольцоСтенНеСчитаетсяПлоскимПолом() {
+        // Настоящая ошибка с практики: по габариту низкое кольцо стен неотличимо от плиты,
+        // и камера поднималась над ним как над полом. Занятость пола их разводит.
+        double ring = ShotPlanner.flatness(wallRing(12, 3));
+        double slab = ShotPlanner.flatness(floor(0, 12, 12));
+
+        assertTrue(ring < 0.2, "кольцо стен посчиталось плоским на " + ring);
+        assertTrue(slab > 0.7, "плита должна остаться плоской, а вышло " + slab);
+    }
+
+    @Test
+    void надСтенамиКамераНеЗадираетсяКакНадПолом() {
+        double overRing = plan(wallRing(12, 3), Set.of(), ShotStyle.MID_HOLD).elevation();
+        double overSlab = plan(floor(0, 12, 12), Set.of(), ShotStyle.MID_HOLD).elevation();
+
+        assertTrue(overSlab - overRing > 8,
+                "над плитой " + overSlab + ", над стенами " + overRing + " — разница мала");
+    }
+
+    @Test
+    void закрытыйСтенамиСлойСнимаетсяИзнутри() {
+        // Интерьер, обнесённый готовыми стенами, снаружи не виден ни с какой стороны.
+        // Единственный выход — подойти ближе, вплоть до того, чтобы оказаться внутри.
+        List<Pos> interior = new ArrayList<>();
+        for (int x = 4; x <= 7; x++) {
+            for (int z = 4; z <= 7; z++) {
+                interior.add(new Pos(x, 1, z));
+            }
+        }
+        Set<Pos> walls = new HashSet<>(wallRing(12, 5));
+        // и крыша сверху, чтобы снаружи не осталось ни одной щели
+        for (int x = 0; x < 12; x++) {
+            for (int z = 0; z < 12; z++) {
+                walls.add(new Pos(x, 5, z));
+            }
+        }
+
+        ShotPlanner.Placement placement = ShotPlanner.plan(interior,
+                List.of(new ShotPlanner.VisibilityCheck(interior, walls)),
+                ShotStyle.MID_HOLD, 70, 0, Double.NaN);
+
+        double[] camera = {placement.shot().x(), placement.shot().y(), placement.shot().z()};
+        double visible = Occlusion.visibleFraction(camera, interior, walls);
+        assertTrue(visible > 0.5, "интерьер виден лишь на " + visible + " — камера осталась снаружи");
+    }
+
     @Test
     void лучВидитЦельНапрямуюИНеВидитСквозьБлок() {
         Pos target = new Pos(0, 0, 0);
