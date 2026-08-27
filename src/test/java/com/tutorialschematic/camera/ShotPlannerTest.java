@@ -193,7 +193,7 @@ class ShotPlannerTest {
     @Test
     void камераНеПоднимаетсяВышеПотолкаДажеНадСамымПлоским() {
         // иначе адаптация по форме утащила бы нас в зенит, от которого мы и уходили
-        double elevation = plan(floor(0, 60, 60), Set.of(), ShotStyle.OVERVIEW_HIGH).elevation();
+        double elevation = plan(floor(0, 60, 60), Set.of(), ShotStyle.HIGH_HOLD).elevation();
         assertTrue(elevation <= 62.0 + 1.0e-6, "подъём " + elevation + " — это уже вид сверху");
     }
 
@@ -261,6 +261,66 @@ class ShotPlannerTest {
         ShotPlanner.Placement start = plan(targets, Set.of(), ShotStyle.FAR_HOLD);
 
         assertEquals(1, ShotPlanner.followShots(targets, start, ShotStyle.FAR_HOLD, front, 600).size());
+    }
+
+    @Test
+    void направлениеГодитсяИКогдаСлойСамСебяЗаслоняет() {
+        // Стена растёт от z=0 к наблюдателю: сначала дальний ряд, потом ближний.
+        // Если смотреть только на первый момент, камера встанет там, откуда к концу
+        // слоя фронт закроет уже поставленное.
+        List<Pos> farRow = wall(0, 9, 6);
+        List<Pos> nearRow = wall(3, 9, 6);
+        List<Pos> all = new ArrayList<>(farRow);
+        all.addAll(nearRow);
+
+        List<ShotPlanner.VisibilityCheck> checks = List.of(
+                new ShotPlanner.VisibilityCheck(farRow, Set.of()),
+                new ShotPlanner.VisibilityCheck(nearRow, new HashSet<>(farRow)));
+
+        ShotPlanner.Placement placement = ShotPlanner.plan(all, checks,
+                ShotStyle.MID_HOLD, 70, 0, Double.NaN);
+
+        // ближний ряд виден только со стороны положительного z — туда камера и обязана уйти
+        double[] camera = {placement.shot().x(), placement.shot().y(), placement.shot().z()};
+        double visible = Occlusion.visibleFraction(camera, nearRow, new HashSet<>(farRow));
+        assertTrue(visible > 0.9, "конец слоя виден только на " + visible);
+    }
+
+    @Test
+    void облётУрезаетсяПодЧислоКадров() {
+        // Полный круг за три кадра сплайн не вытянет: он уведёт камеру мимо цели, и
+        // облёт перестанет смотреть на работу. Поэтому дуга урезается под плотность.
+        List<List<Pos>> steps = movingFront();
+        List<Pos> targets = new ArrayList<>();
+        steps.forEach(targets::addAll);
+
+        List<BuildTimeline.FrontSample> front = BuildTimeline.sample(steps, 0, 120);
+        ShotPlanner.Placement start = plan(targets, Set.of(), ShotStyle.ORBIT);
+        List<CameraShot> shots = ShotPlanner.followShots(targets, start, ShotStyle.ORBIT, front, 120);
+
+        assertTrue(shots.size() < 8, "на короткий слой кадров мало: " + shots.size());
+
+        double[] center = ShotPlanner.centerOf(targets);
+        double swept = Math.abs(ShotPlanner.shortestTurn(
+                bearing(shots.get(shots.size() - 1), center) - bearing(shots.get(0), center)));
+        assertTrue(swept < 180, "за " + shots.size() + " кадров облёт прошёл " + swept + " градусов");
+    }
+
+    @Test
+    void длинныйСлойПозволяетОблётуРазвернуться() {
+        List<List<Pos>> steps = movingFront();
+        List<Pos> targets = new ArrayList<>();
+        steps.forEach(targets::addAll);
+
+        List<BuildTimeline.FrontSample> longFront = BuildTimeline.sample(steps, 0, 1200);
+        List<BuildTimeline.FrontSample> shortFront = BuildTimeline.sample(steps, 0, 120);
+
+        assertTrue(longFront.size() > shortFront.size(),
+                "чем длиннее слой, тем больше кадров и тем шире допустимая дуга");
+    }
+
+    private static double bearing(CameraShot shot, double[] center) {
+        return Math.toDegrees(Math.atan2(shot.x() - center[0], shot.z() - center[2]));
     }
 
     @Test

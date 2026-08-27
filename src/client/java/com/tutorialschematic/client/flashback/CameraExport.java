@@ -190,12 +190,16 @@ public final class CameraExport {
             // Где идёт работа в каждый момент слоя — по этому камера её и ведёт.
             List<BuildTimeline.FrontSample> front = BuildTimeline.sample(
                     timing.layer().steps(), timing.startTick(), timing.endTick() - 1);
+            // А это моменты, в которые проверяется видимость. Блоки, поставленные раньше
+            // внутри того же слоя, заслоняют фронт не хуже соседних слоёв, поэтому они
+            // копятся по ходу — иначе камера встаёт там, откуда к концу слоя ничего не видно.
+            List<ShotPlanner.VisibilityCheck> checks = visibilityChecks(timing.layer().steps(), built);
 
             for (ShotStyle style : ShotStyle.values()) {
                 if (style.wholeBuild()) {
                     continue;
                 }
-                ShotPlanner.Placement start = ShotPlanner.plan(targets, built, style, fov,
+                ShotPlanner.Placement start = ShotPlanner.plan(targets, checks, style, fov,
                         timing.startTick(), lastAzimuth.get(style));
                 lastAzimuth.put(style, start.azimuth());
 
@@ -207,6 +211,38 @@ public final class CameraExport {
             built.addAll(targets);
         }
         return tracks;
+    }
+
+    /**
+     * Несколько моментов слоя для проверки видимости: начало, середина и конец.
+     *
+     * <p>К каждому моменту заслонами считаются и предыдущие слои, и то, что успели
+     * поставить в этом же слое. Без второго камера норовит встать там, откуда начало
+     * слоя видно прекрасно, а конец не видно вовсе.
+     */
+    private static List<ShotPlanner.VisibilityCheck> visibilityChecks(List<List<Pos>> steps,
+                                                                      Set<Pos> alreadyBuilt) {
+        List<ShotPlanner.VisibilityCheck> checks = new ArrayList<>();
+        if (steps.isEmpty()) {
+            return checks;
+        }
+        Set<Pos> occluders = new HashSet<>(alreadyBuilt);
+        int slices = Math.min(3, steps.size());
+
+        for (int i = 0; i < slices; i++) {
+            int from = (int) ((long) i * steps.size() / slices);
+            int to = (int) ((long) (i + 1) * steps.size() / slices);
+
+            List<Pos> window = new ArrayList<>();
+            for (int step = from; step < to; step++) {
+                window.addAll(steps.get(step));
+            }
+            if (!window.isEmpty()) {
+                checks.add(new ShotPlanner.VisibilityCheck(window, new HashSet<>(occluders)));
+                occluders.addAll(window);
+            }
+        }
+        return checks;
     }
 
     private static List<Pos> positionsOf(BuildLayer layer) {

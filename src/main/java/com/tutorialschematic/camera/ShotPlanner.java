@@ -43,12 +43,30 @@ public final class ShotPlanner {
     /** Дальше этого — перескок через ось, движение в кадре перевернётся. */
     private static final double MAX_TURN = 150;
 
+    /**
+     * Больше этого на один кадр поворачивать нельзя: сплайн уведёт камеру мимо цели.
+     *
+     * <p>Запас нужен потому, что к этому повороту добавляется смещение прицела вслед за
+     * работой — суммарный угол между кадрами всегда больше заданной дуги.
+     */
+    private static final double MAX_ARC_PER_STEP = 30;
+
     /** На сколько градусов поднимаем камеру над плоским слоем. */
     private static final double FLAT_LIFT = 25;
     /** Выше этого не поднимаемся ни при какой форме: дальше начинается мёртвый вид сверху. */
     private static final double ELEVATION_CEILING = 62;
 
     private ShotPlanner() {
+    }
+
+    /**
+     * Один срез проверки видимости: что снимаем и что к этому моменту уже стоит.
+     *
+     * <p>Проверять слой одним куском нельзя: блоки, поставленные раньше внутри того же
+     * слоя, к концу заслоняют фронт не хуже соседних слоёв. Поэтому направление
+     * оценивается по нескольким моментам сразу.
+     */
+    public record VisibilityCheck(Collection<Pos> targets, Set<Pos> occluders) {
     }
 
     /** Ракурс вместе с параметрами, из которых он получен: нужны движению и следующему плану. */
@@ -63,14 +81,31 @@ public final class ShotPlanner {
     public static Placement plan(Collection<Pos> targets, Set<Pos> occluders,
                                  ShotStyle style, double fovDegrees, int tick,
                                  double previousAzimuth) {
+        return plan(targets, List.of(new VisibilityCheck(targets, occluders)),
+                style, fovDegrees, tick, previousAzimuth);
+    }
+
+    /**
+     * Лучший ракурс на слой.
+     *
+     * @param checks моменты, в которые проверяется видимость: направление должно годиться
+     *               и в начале слоя, и в конце, когда половина работы уже заслоняет фронт
+     * @param previousAzimuth азимут предыдущего плана этой же дорожки, либо {@code NaN}
+     */
+    public static Placement plan(Collection<Pos> targets, List<VisibilityCheck> checks,
+                                 ShotStyle style, double fovDegrees, int tick,
+                                 double previousAzimuth) {
         double[] center = centerOf(targets);
         double radius = radiusOf(targets, center);
         double distance = CameraFraming.distanceFor(radius, fovDegrees, style.margin());
-        List<Pos> samples = sample(targets);
 
-        // Плоский слой — пол, фундамент, потолок — с малой высоты виден с торца, то есть
-        // никак. Поднимаем камеру тем сильнее, чем слой площе; вертикальные стены
-        // остаются на своей высоте.
+        List<VisibilityCheck> sampled = new ArrayList<>();
+        for (VisibilityCheck check : checks) {
+            if (!check.targets().isEmpty()) {
+                sampled.add(new VisibilityCheck(sample(check.targets()), check.occluders()));
+            }
+        }
+
         double lift = FLAT_LIFT * flatness(targets);
         double minElevation = Math.min(style.minElevation() + lift, ELEVATION_CEILING);
         double maxElevation = Math.min(style.maxElevation() + lift, ELEVATION_CEILING);
@@ -85,10 +120,9 @@ public final class ShotPlanner {
                 double elevation = minElevation
                         + e * (maxElevation - minElevation) / (ELEVATION_STEPS - 1);
 
-                double[] candidate = CameraFraming.positionAround(center, distance, azimuth, elevation);
-                double visibility = Occlusion.visibleFraction(candidate, samples, occluders);
+                double visibility = visibilityAcross(center, distance, azimuth, elevation, sampled);
                 double score = visibility * VISIBILITY_WEIGHT
-                        + threeQuarterScore(azimuth)
+                        + threeQuarterScore(azimuth + style.sideOffset())
                         + elevationScore(elevation, minElevation, maxElevation)
                         + turnScore(azimuth, previousAzimuth);
 
@@ -100,6 +134,28 @@ public final class ShotPlanner {
             }
         }
         return place(center, radius, distance, bestAzimuth, bestElevation, tick);
+    }
+
+    /**
+     * Худшая видимость по всем проверяемым моментам.
+     *
+     * <p>Именно худшая, а не средняя: направление, из которого в конце слоя не видно
+     * ничего, не спасает то, что в начале было видно всё.
+     */
+    private static double visibilityAcross(double[] center, double distance, double azimuth,
+                                           double elevation, List<VisibilityCheck> checks) {
+        if (checks.isEmpty()) {
+            return 1;
+        }
+        double worst = 1;
+        for (VisibilityCheck check : checks) {
+            double[] camera = CameraFraming.positionAround(
+                    centerOf(check.targets()), distance, azimuth, elevation);
+            // камера стоит вокруг своего куска, но проверяем именно его видимость
+            worst = Math.min(worst,
+                    Occlusion.visibleFraction(camera, check.targets(), check.occluders()));
+        }
+        return worst;
     }
 
     /**
@@ -149,7 +205,11 @@ public final class ShotPlanner {
             double distance = start.distance() / Math.max(1.0e-6, radiusRatio(style, layerRadius, radius))
                     * style.distanceRatio(progress);
 
-            double azimuth = start.azimuth() + style.arcDegrees() * progress;
+            // Дугу ограничиваем плотностью кадров: между ними идёт сплайн, и если на
+            // один кадр приходится больше сорока пяти градусов, он уводит камеру мимо
+            // цели — со стороны это выглядит как «едет, но не смотрит на работу».
+            double arc = Math.min(style.arcDegrees(), MAX_ARC_PER_STEP * Math.max(1, total - 1));
+            double azimuth = start.azimuth() + arc * progress;
             shots.add(place(aim, radius, distance, azimuth, start.elevation(), sample.tick()).shot());
         }
         return shots;
