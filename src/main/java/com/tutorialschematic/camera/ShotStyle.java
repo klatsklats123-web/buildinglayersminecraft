@@ -20,30 +20,32 @@ public enum ShotStyle {
      * Общий план на всю постройку, один на всю запись. Не переставляется между слоями:
      * к нему возвращаются, чтобы увидеть, насколько дом вырос.
      */
-    MASTER("Общий · вся постройка", 1.30, 20, 34, Movement.NONE, 0x9B7FD8, 1.0, false),
+    MASTER("Общий · вся постройка", 1.30, 20, 34, Movement.NONE, 0x9B7FD8, 1.0, false, 0),
 
-    // --- Статичные: камера не двигается совсем, кадр держится до следующего слоя ---
+    // --- Статичные. Расходятся по сторонам постройки: каждая следующая ищет ракурс
+    // подальше от уже занятых, иначе все встают в одну точку и отличаются только дальностью.
 
-    FAR_HOLD("Дальний · статичный", 1.50, 16, 30, Movement.NONE, 0x4A90D9, 1.0, false),
-    MID_HOLD("Средний · статичный", 1.15, 14, 28, Movement.NONE, 0x50B0A0, 1.0, false),
-    NEAR_HOLD("Ближний · статичный", 0.90, 12, 26, Movement.NONE, 0x7FD88F, 1.0, false),
-    HIGH_HOLD("Обзорный · статичный", 1.30, 38, 52, Movement.NONE, 0x6A8FB0, 1.0, false),
-    /** Тот же слой с другой стороны: даёт вторую точку для склейки без движения. */
-    SIDE_HOLD("Сбоку · статичный", 1.20, 14, 28, Movement.NONE, 0xB0A06A, 1.0, false),
+    MID_HOLD("Средний · статичный", 1.15, 14, 28, Movement.NONE, 0x50B0A0, 1.0, false, 1),
+    FAR_HOLD("Дальний · статичный", 1.50, 16, 30, Movement.NONE, 0x4A90D9, 1.0, false, 1),
+    NEAR_HOLD("Ближний · статичный", 0.90, 12, 26, Movement.NONE, 0x7FD88F, 1.0, false, 1),
+    SIDE_HOLD("Средний · другая сторона", 1.15, 14, 28, Movement.NONE, 0xB0A06A, 1.0, false, 1),
+    FAR_SIDE_HOLD("Дальний · другая сторона", 1.50, 16, 30, Movement.NONE, 0x6A90B0, 1.0, false, 1),
+    NEAR_SIDE_HOLD("Ближний · другая сторона", 0.90, 12, 26, Movement.NONE, 0x8FD8A8, 1.0, false, 1),
+    HIGH_HOLD("Обзорный · статичный", 1.30, 38, 52, Movement.NONE, 0x6A8FB0, 1.0, false, 1),
 
-    // --- Ведущие: прицел идёт за работой ---
+    // --- Ведущие: прицел идёт за работой. Расходятся между собой отдельной группой.
 
-    FAR_FOLLOW("Дальний · ведёт", 1.45, 16, 30, Movement.NONE, 0x50B0A0, 0.5, false),
-    MID_FOLLOW("Средний · ведёт", 1.05, 14, 28, Movement.NONE, 0xC9C24A, 0.0, false),
-    NEAR_FOLLOW("Ближний · ведёт", 0.85, 12, 26, Movement.NONE, 0xD9A24A, 0.0, true),
-    HIGH_FOLLOW("Обзорный · ведёт", 1.30, 38, 52, Movement.NONE, 0x8FB06A, 0.4, false),
+    MID_FOLLOW("Средний · ведёт", 1.05, 14, 28, Movement.NONE, 0xC9C24A, 0.0, false, 2),
+    NEAR_FOLLOW("Ближний · ведёт", 0.85, 12, 26, Movement.NONE, 0xD9A24A, 0.0, true, 2),
+    FAR_FOLLOW("Дальний · ведёт", 1.45, 16, 30, Movement.NONE, 0x50B0A0, 0.5, false, 2),
+    HIGH_FOLLOW("Обзорный · ведёт", 1.30, 38, 52, Movement.NONE, 0x8FB06A, 0.4, false, 2),
 
-    // --- С движением камеры ---
+    // --- С движением камеры. Эти и так уезжают, разводить их незачем.
 
-    MID_ARC("Средний · дуга", 1.10, 14, 28, Movement.ARC, 0xD96E4A, 0.0, false),
-    ORBIT("Облёт кругом", 1.35, 18, 32, Movement.ORBIT, 0xD94A9B, 0.4, false),
-    DOLLY_IN("Наезд", 1.40, 12, 26, Movement.DOLLY_IN, 0xC94A4A, 0.0, false),
-    DOLLY_OUT("Отъезд", 0.80, 12, 26, Movement.DOLLY_OUT, 0x4AC9A8, 0.0, false);
+    MID_ARC("Средний · дуга", 1.10, 14, 28, Movement.ARC, 0xD96E4A, 0.0, false, 0),
+    ORBIT("Облёт кругом", 1.35, 18, 32, Movement.ORBIT, 0xD94A9B, 0.4, false, 0),
+    DOLLY_IN("Наезд", 1.40, 12, 26, Movement.DOLLY_IN, 0xC94A4A, 0.0, false, 0),
+    DOLLY_OUT("Отъезд", 0.80, 12, 26, Movement.DOLLY_OUT, 0x4AC9A8, 0.0, false, 0);
 
     /** Как камера ведёт себя за время слоя, помимо ведения прицелом. */
     public enum Movement {
@@ -67,9 +69,11 @@ public enum ShotStyle {
     private final int trackColour;
     private final double contextBlend;
     private final boolean frameOnFront;
+    private final int spreadGroup;
 
     ShotStyle(String displayName, double margin, double minElevation, double maxElevation,
-              Movement movement, int trackColour, double contextBlend, boolean frameOnFront) {
+              Movement movement, int trackColour, double contextBlend, boolean frameOnFront,
+              int spreadGroup) {
         this.displayName = displayName;
         this.margin = margin;
         this.minElevation = minElevation;
@@ -78,6 +82,18 @@ public enum ShotStyle {
         this.trackColour = trackColour;
         this.contextBlend = contextBlend;
         this.frameOnFront = frameOnFront;
+        this.spreadGroup = spreadGroup;
+    }
+
+    /**
+     * Группа, внутри которой дорожки расходятся по сторонам постройки.
+     *
+     * <p>Ноль означает «не разводить». Без этого все статичные дорожки выбирают один и тот
+     * же лучший ракурс — правила композиции у них общие, — и отличаются только дальностью.
+     * Со стороны это выглядит как один план, снятый с трёх дистанций.
+     */
+    public int spreadGroup() {
+        return spreadGroup;
     }
 
     public String displayName() {
@@ -133,16 +149,6 @@ public enum ShotStyle {
      */
     public boolean follows() {
         return contextBlend < 1.0;
-    }
-
-    /**
-     * Насколько отвернуть от ракурса предыдущей статичной дорожки.
-     *
-     * <p>Иначе все статичные планы встанут в одну точку: правила композиции у них
-     * одинаковые, а разворот считается только между слоями одной дорожки.
-     */
-    public double sideOffset() {
-        return this == SIDE_HOLD ? 90 : 0;
     }
 
     /**

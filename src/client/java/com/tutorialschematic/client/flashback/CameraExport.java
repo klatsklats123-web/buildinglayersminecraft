@@ -15,6 +15,7 @@ import org.jetbrains.annotations.Nullable;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -195,13 +196,25 @@ public final class CameraExport {
             // копятся по ходу — иначе камера встаёт там, откуда к концу слоя ничего не видно.
             List<ShotPlanner.VisibilityCheck> checks = visibilityChecks(timing.layer().steps(), built);
 
+            // Занятые ракурсы этого слоя, по группам: статичные расходятся между собой,
+            // ведущие между собой. Иначе все дорожки с одинаковыми правилами композиции
+            // выбирают один и тот же ракурс и отличаются только дальностью.
+            Map<Integer, List<Double>> takenByGroup = new HashMap<>();
+
             for (ShotStyle style : ShotStyle.values()) {
                 if (style.wholeBuild()) {
                     continue;
                 }
+                List<Double> avoid = style.spreadGroup() == 0
+                        ? List.of()
+                        : takenByGroup.computeIfAbsent(style.spreadGroup(), key -> new ArrayList<>());
+
                 ShotPlanner.Placement start = ShotPlanner.plan(targets, checks, style, fov,
-                        timing.startTick(), lastAzimuth.get(style));
+                        timing.startTick(), lastAzimuth.get(style), avoid);
                 lastAzimuth.put(style, start.azimuth());
+                if (style.spreadGroup() != 0) {
+                    avoid.add(start.azimuth());
+                }
 
                 // Конечный кадр ставим на тик раньше следующего слоя: кадры лежат
                 // в словаре по тику, и совпадение просто затёрло бы соседний.

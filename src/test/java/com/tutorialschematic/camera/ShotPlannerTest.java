@@ -387,6 +387,60 @@ class ShotPlannerTest {
     }
 
     @Test
+    void дорожкиОднойГруппыРасходятсяПоСторонам() {
+        // Настоящая жалоба с практики: статичных планов пять, а ракурс у всех один —
+        // отличались только дальностью. Правила композиции у них общие, значит без
+        // явного разведения они и должны были выбрать одно и то же.
+        List<Pos> target = wallRing(12, 3);
+        List<ShotPlanner.VisibilityCheck> checks =
+                List.of(new ShotPlanner.VisibilityCheck(target, Set.of()));
+
+        List<Double> taken = new ArrayList<>();
+        List<ShotStyle> statics = new ArrayList<>();
+        for (ShotStyle style : ShotStyle.values()) {
+            if (style.spreadGroup() == 1) {
+                statics.add(style);
+            }
+        }
+        assertTrue(statics.size() >= 5, "статичных дорожек должно быть много");
+
+        for (ShotStyle style : statics) {
+            ShotPlanner.Placement placement = ShotPlanner.plan(target, checks, style, 70, 0,
+                    Double.NaN, List.copyOf(taken));
+            taken.add(placement.azimuth());
+        }
+
+        // первые несколько обязаны разойтись: дальше сторон просто не хватает
+        for (int i = 1; i < Math.min(4, taken.size()); i++) {
+            for (int j = 0; j < i; j++) {
+                double turn = Math.abs(ShotPlanner.shortestTurn(taken.get(i) - taken.get(j)));
+                assertTrue(turn > 30,
+                        "дорожки " + i + " и " + j + " встали в " + turn + " градусах друг от друга");
+            }
+        }
+    }
+
+    @Test
+    void разведениеНеПересиливаетВидимость() {
+        // отойти в сторону полезно, но не ценой того, что снимать станет нечего
+        List<Pos> target = wall(0, 9, 6);
+        Set<Pos> occluders = new HashSet<>(wall(-6, 21, 14));
+        List<ShotPlanner.VisibilityCheck> checks =
+                List.of(new ShotPlanner.VisibilityCheck(target, occluders));
+
+        // занимаем сразу несколько ракурсов с той стороны, откуда видно лучше всего
+        List<Double> taken = List.of(0.0, 30.0, 330.0);
+        ShotPlanner.Placement placement = ShotPlanner.plan(target, checks,
+                ShotStyle.MID_HOLD, 70, 0, Double.NaN, taken);
+
+        // Проверяем не координату, а суть: камера могла честно уйти вбок, откуда стену
+        // тоже видно. Недопустимо другое — уйти за глухой заслон ради разведения.
+        double[] camera = {placement.shot().x(), placement.shot().y(), placement.shot().z()};
+        double visible = Occlusion.visibleFraction(camera, target, occluders);
+        assertTrue(visible > 0.8, "разведение утащило камеру туда, где видно лишь " + visible);
+    }
+
+    @Test
     void лучВидитЦельНапрямуюИНеВидитСквозьБлок() {
         Pos target = new Pos(0, 0, 0);
         double[] camera = {0.5, 0.5, 8.5};

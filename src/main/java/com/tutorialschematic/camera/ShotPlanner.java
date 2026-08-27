@@ -43,6 +43,8 @@ public final class ShotPlanner {
     private static final double MIN_TURN = 30;
     /** Дальше этого — перескок через ось, движение в кадре перевернётся. */
     private static final double MAX_TURN = 150;
+    /** Ближе этого к уже занятому ракурсу другая дорожка вставать не должна. */
+    private static final double MIN_SPREAD = 55;
 
     /**
      * Больше этого на один кадр поворачивать нельзя: сплайн уведёт камеру мимо цели.
@@ -107,6 +109,18 @@ public final class ShotPlanner {
     public static Placement plan(Collection<Pos> targets, List<VisibilityCheck> checks,
                                  ShotStyle style, double fovDegrees, int tick,
                                  double previousAzimuth) {
+        return plan(targets, checks, style, fovDegrees, tick, previousAzimuth, List.of());
+    }
+
+    /**
+     * То же, но с оглядкой на ракурсы, уже занятые другими дорожками этого слоя.
+     *
+     * @param avoid азимуты, от которых надо отойти: иначе все дорожки с одинаковыми
+     *              правилами композиции выберут один и тот же ракурс
+     */
+    public static Placement plan(Collection<Pos> targets, List<VisibilityCheck> checks,
+                                 ShotStyle style, double fovDegrees, int tick,
+                                 double previousAzimuth, List<Double> avoid) {
         double[] center = centerOf(targets);
         double radius = radiusOf(targets, center);
         double distance = CameraFraming.distanceFor(radius, fovDegrees, style.margin());
@@ -139,9 +153,10 @@ public final class ShotPlanner {
 
                     double visibility = visibilityAcross(tryDistance, azimuth, elevation, sampled, style);
                     double score = visibility * VISIBILITY_WEIGHT
-                            + threeQuarterScore(azimuth + style.sideOffset())
+                            + threeQuarterScore(azimuth)
                             + elevationScore(elevation, minElevation, maxElevation)
                             + turnScore(azimuth, previousAzimuth)
+                            + spreadScore(azimuth, avoid)
                             - closerPenalty;
 
                     if (score > bestScore) {
@@ -265,6 +280,23 @@ public final class ShotPlanner {
     static double threeQuarterScore(double azimuth) {
         double offset = Math.abs(((azimuth % 90) + 90) % 90 - 45);
         return 1.0 - offset / 45.0;
+    }
+
+    /**
+     * Насколько ракурс свободен от уже занятых другими дорожками.
+     *
+     * <p>Штрафуем сближение меньше чем на {@link #MIN_SPREAD} градусов. Вес заметно
+     * меньше видимости: развести планы полезно, но не ценой того, что снимать станет нечего.
+     */
+    static double spreadScore(double azimuth, List<Double> avoid) {
+        double penalty = 0;
+        for (double taken : avoid) {
+            double turn = Math.abs(shortestTurn(azimuth - taken));
+            if (turn < MIN_SPREAD) {
+                penalty -= 2.5 * (1.0 - turn / MIN_SPREAD);
+            }
+        }
+        return penalty;
     }
 
     /** Разворот от предыдущего плана: слишком малый — рывок, слишком большой — перескок через ось. */
