@@ -1,5 +1,6 @@
 package com.tutorialschematic.client.flashback;
 
+import com.tutorialschematic.camera.BuildTimeline;
 import com.tutorialschematic.camera.CameraShot;
 import com.tutorialschematic.camera.ShotPlanner;
 import com.tutorialschematic.camera.ShotStyle;
@@ -186,6 +187,9 @@ public final class CameraExport {
 
         for (LayerTiming timing : timings) {
             List<Pos> targets = positionsOf(timing.layer());
+            // Где идёт работа в каждый момент слоя — по этому камера её и ведёт.
+            List<BuildTimeline.FrontSample> front = BuildTimeline.sample(
+                    timing.layer().steps(), timing.startTick(), timing.endTick() - 1);
 
             for (ShotStyle style : ShotStyle.values()) {
                 if (style.wholeBuild()) {
@@ -195,10 +199,10 @@ public final class CameraExport {
                         timing.startTick(), lastAzimuth.get(style));
                 lastAzimuth.put(style, start.azimuth());
 
-                // Конечный кадр движения ставим на тик раньше следующего слоя: кадры
-                // лежат в словаре по тику, и совпадение просто затёрло бы соседний.
-                tracks.get(style).addAll(
-                        ShotPlanner.movementShots(targets, start, style, timing.endTick() - 1));
+                // Конечный кадр ставим на тик раньше следующего слоя: кадры лежат
+                // в словаре по тику, и совпадение просто затёрло бы соседний.
+                tracks.get(style).addAll(ShotPlanner.followShots(
+                        targets, start, style, front, timing.endTick() - 1));
             }
             built.addAll(targets);
         }

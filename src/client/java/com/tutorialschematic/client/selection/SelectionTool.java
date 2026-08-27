@@ -47,13 +47,8 @@ public final class SelectionTool {
      * одной рамкой, без поблочной заливки.
      */
     private static final int PREVIEW_LIMIT = 4096;
-    /**
-     * Радиус захвата «магнита» в блоках. Ограничение обязательно: без него один клик по
-     * камню собрал бы половину горы.
-     */
-    private static final int MAGNET_RADIUS = 20;
-    /** Потолок «магнита» по числу блоков за клик. */
-    private static final int MAGNET_LIMIT = 8192;
+    /** Потолок «магнита» по числу пройденных клеток за клик. */
+    private static final int MAGNET_LIMIT = 32768;
 
     private SelectionTool() {
     }
@@ -157,7 +152,7 @@ public final class SelectionTool {
         return switch (state.mode()) {
             case SINGLE, TWO_POINTS -> List.of(target);
             case FLOOD -> flood(level, target);
-            case MATERIAL -> sameMaterialAround(level, target);
+            case MATERIAL -> magnet(state, level, target);
         };
     }
 
@@ -383,37 +378,57 @@ public final class SelectionTool {
     }
 
     /**
-     * «Магнит»: все блоки того же материала вокруг, <b>без учёта связности</b>.
+     * «Магнит»: заливка, которая проходит <b>сквозь уже размеченное</b>.
      *
-     * <p>Заливка идёт по соседям и останавливается на чужом блоке: если дубовые брёвна
-     * разделены берёзовыми, до дальних дуб не доберётся. Здесь связность не важна —
-     * берём всё того же типа в пределах радиуса, поэтому оба конца попадут в слой сразу.
+     * <p>Обычная заливка идёт только по своему материалу и упирается в чужой блок. Здесь
+     * мостом служит всё, что уже лежит в активном слое: диорит в центре, вокруг кольцо
+     * андезита, за ним снова диорит — андезит уже размечен, значит повторный клик по
+     * центру дотянется до внешнего кольца, хотя по нему не кликали.
      *
-     * <p>Сравнивается именно блок, а не полное состояние: иначе брёвна разной ориентации
+     * <p>В слой при этом добавляется только свой материал: мосты и так в нём лежат, а
+     * забирать чужие блоки из других слоёв магнит не должен.
+     *
+     * <p>Сравнивается тип блока, а не полное состояние: иначе брёвна разной ориентации
      * или ступеньки разного поворота считались бы разными материалами.
      */
-    private static List<BlockPos> sameMaterialAround(Level level, BlockPos target) {
+    private static List<BlockPos> magnet(EditorState state, Level level, BlockPos target) {
         BlockState startState = level.getBlockState(target);
         if (startState.isAir()) {
             return List.of();
         }
-        List<BlockPos> found = new ArrayList<>();
-        for (int dx = -MAGNET_RADIUS; dx <= MAGNET_RADIUS; dx++) {
-            for (int dy = -MAGNET_RADIUS; dy <= MAGNET_RADIUS; dy++) {
-                for (int dz = -MAGNET_RADIUS; dz <= MAGNET_RADIUS; dz++) {
-                    BlockPos pos = target.offset(dx, dy, dz);
-                    if (level.getBlockState(pos).is(startState.getBlock())) {
-                        found.add(pos);
-                        if (found.size() >= MAGNET_LIMIT) {
-                            EditorState.error("Магнит остановлен на " + MAGNET_LIMIT
-                                    + " блоках — слишком много такого материала вокруг");
-                            return found;
-                        }
-                    }
+        BuildLayer layer = state.activeLayer();
+        Set<BlockPos> visited = new LinkedHashSet<>();
+        Deque<BlockPos> queue = new ArrayDeque<>();
+        List<BlockPos> matching = new ArrayList<>();
+
+        BlockPos start = target.immutable();
+        visited.add(start);
+        queue.add(start);
+        matching.add(start);
+
+        while (!queue.isEmpty() && visited.size() < MAGNET_LIMIT) {
+            BlockPos current = queue.poll();
+            for (Direction direction : Direction.values()) {
+                BlockPos next = current.relative(direction).immutable();
+                if (!visited.add(next)) {
+                    continue;
+                }
+                boolean sameMaterial = level.getBlockState(next).is(startState.getBlock());
+                boolean alreadyMarked = layer != null && layer.contains(next);
+
+                // мост: по чужому блоку идём дальше, только если он уже в этом слое
+                if (sameMaterial || alreadyMarked) {
+                    queue.add(next);
+                }
+                if (sameMaterial) {
+                    matching.add(next);
                 }
             }
         }
-        return found;
+        if (visited.size() >= MAGNET_LIMIT) {
+            EditorState.error("Магнит остановлен на " + MAGNET_LIMIT + " клетках — область слишком большая");
+        }
+        return matching;
     }
 
     /** Все непустые блоки в коробке между двумя углами включительно. */

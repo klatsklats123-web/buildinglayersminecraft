@@ -35,7 +35,7 @@ class ShotPlannerTest {
         List<Pos> target = wall(0, 9, 6);
         Set<Pos> occluders = new HashSet<>(wall(-6, 21, 14));
 
-        ShotPlanner.Placement placement = plan(target, occluders, ShotStyle.MID_HOLD);
+        ShotPlanner.Placement placement = plan(target, occluders, ShotStyle.MID_FOLLOW);
         assertTrue(placement.shot().z() > 0, "камера ушла туда, откуда видно");
     }
 
@@ -44,7 +44,7 @@ class ShotPlannerTest {
         // Главное исправление: раньше побеждал первый кандидат перебора и камера всегда
         // вставала в лоб. Теперь при равной видимости выигрывает диагональ.
         List<Pos> target = wall(0, 9, 6);
-        ShotPlanner.Placement placement = plan(target, Set.of(), ShotStyle.MID_HOLD);
+        ShotPlanner.Placement placement = plan(target, Set.of(), ShotStyle.MID_FOLLOW);
 
         double offset = Math.abs(((placement.azimuth() % 90) + 90) % 90 - 45);
         assertTrue(offset < 20,
@@ -79,9 +79,9 @@ class ShotPlannerTest {
     void соседниеПланыРазворачиваютсяНеМенееЧемНаТридцатьГрадусов() {
         // иначе склейка читается рывком, а не сменой плана
         List<Pos> target = wall(0, 9, 6);
-        double previous = plan(target, Set.of(), ShotStyle.MID_HOLD).azimuth();
+        double previous = plan(target, Set.of(), ShotStyle.MID_FOLLOW).azimuth();
 
-        ShotPlanner.Placement next = ShotPlanner.plan(target, Set.of(), ShotStyle.MID_HOLD, 70, 100, previous);
+        ShotPlanner.Placement next = ShotPlanner.plan(target, Set.of(), ShotStyle.MID_FOLLOW, 70, 100, previous);
         double turn = Math.abs(ShotPlanner.shortestTurn(next.azimuth() - previous));
 
         assertTrue(turn >= 30, "разворот всего " + turn + " градусов — это рывок");
@@ -92,8 +92,8 @@ class ShotPlannerTest {
     void ближнийРакурсБлижеДальнего() {
         List<Pos> target = wall(0, 15, 10);
         double far = plan(target, Set.of(), ShotStyle.FAR_HOLD).distance();
-        double mid = plan(target, Set.of(), ShotStyle.MID_HOLD).distance();
-        double near = plan(target, Set.of(), ShotStyle.NEAR_HOLD).distance();
+        double mid = plan(target, Set.of(), ShotStyle.MID_FOLLOW).distance();
+        double near = plan(target, Set.of(), ShotStyle.NEAR_FOLLOW).distance();
 
         assertTrue(near < mid, "ближний ближе среднего");
         assertTrue(mid < far, "средний ближе дальнего");
@@ -104,12 +104,12 @@ class ShotPlannerTest {
         List<Pos> target = wall(0, 9, 6);
 
         ShotPlanner.Placement in = plan(target, Set.of(), ShotStyle.DOLLY_IN);
-        List<CameraShot> inShots = ShotPlanner.movementShots(target, in, ShotStyle.DOLLY_IN, 400);
+        List<CameraShot> inShots = ShotPlanner.followShots(target, in, ShotStyle.DOLLY_IN, List.of(), 400);
         assertEquals(2, inShots.size());
         assertTrue(distance(inShots.get(1), target) < distance(inShots.get(0), target), "наезд приближает");
 
         ShotPlanner.Placement out = plan(target, Set.of(), ShotStyle.DOLLY_OUT);
-        List<CameraShot> outShots = ShotPlanner.movementShots(target, out, ShotStyle.DOLLY_OUT, 400);
+        List<CameraShot> outShots = ShotPlanner.followShots(target, out, ShotStyle.DOLLY_OUT, List.of(), 400);
         assertTrue(distance(outShots.get(1), target) > distance(outShots.get(0), target), "отъезд отдаляет");
     }
 
@@ -118,14 +118,14 @@ class ShotPlannerTest {
         List<Pos> target = wall(0, 9, 6);
         ShotPlanner.Placement placement = plan(target, Set.of(), ShotStyle.FAR_HOLD);
 
-        assertEquals(1, ShotPlanner.movementShots(target, placement, ShotStyle.FAR_HOLD, 400).size());
+        assertEquals(1, ShotPlanner.followShots(target, placement, ShotStyle.FAR_HOLD, List.of(), 400).size());
     }
 
     @Test
     void дугаУводитКамеруВБокНоНеМеняетДистанцию() {
         List<Pos> target = wall(0, 9, 6);
         ShotPlanner.Placement placement = plan(target, Set.of(), ShotStyle.MID_ARC);
-        List<CameraShot> shots = ShotPlanner.movementShots(target, placement, ShotStyle.MID_ARC, 400);
+        List<CameraShot> shots = ShotPlanner.followShots(target, placement, ShotStyle.MID_ARC, List.of(), 400);
 
         assertEquals(2, shots.size());
         assertEquals(distance(shots.get(0), target), distance(shots.get(1), target), 1.0e-6);
@@ -139,7 +139,7 @@ class ShotPlannerTest {
         // совпадение затёрло бы соседний кадр: они лежат в словаре по номеру тика
         List<Pos> target = wall(0, 9, 6);
         ShotPlanner.Placement placement = ShotPlanner.plan(target, Set.of(), ShotStyle.ORBIT, 70, 100, Double.NaN);
-        List<CameraShot> shots = ShotPlanner.movementShots(target, placement, ShotStyle.ORBIT, 300);
+        List<CameraShot> shots = ShotPlanner.followShots(target, placement, ShotStyle.ORBIT, List.of(), 300);
 
         assertEquals(2, shots.size());
         assertTrue(shots.get(0).tick() < shots.get(1).tick());
@@ -149,7 +149,7 @@ class ShotPlannerTest {
     void целимсяВышеЦентраРадиПравилаТретей() {
         // постройка должна садиться в нижние две трети кадра, а не делить его пополам
         List<Pos> target = wall(0, 9, 20);
-        ShotPlanner.Placement placement = plan(target, Set.of(), ShotStyle.MID_HOLD);
+        ShotPlanner.Placement placement = plan(target, Set.of(), ShotStyle.MID_FOLLOW);
         double[] center = ShotPlanner.centerOf(target);
 
         double[] from = {placement.shot().x(), placement.shot().y(), placement.shot().z()};
@@ -176,8 +176,8 @@ class ShotPlannerTest {
     void плоскийСлойСнимаетсяВыше() {
         // Ровно возражение из практики: фундамент с малой высоты виден с торца, то есть
         // никак. Стена при этом подниматься не должна.
-        double floorElevation = plan(floor(0, 15, 15), Set.of(), ShotStyle.MID_HOLD).elevation();
-        double wallElevation = plan(wall(0, 15, 10), Set.of(), ShotStyle.MID_HOLD).elevation();
+        double floorElevation = plan(floor(0, 15, 15), Set.of(), ShotStyle.MID_FOLLOW).elevation();
+        double wallElevation = plan(wall(0, 15, 10), Set.of(), ShotStyle.MID_FOLLOW).elevation();
 
         assertTrue(floorElevation > wallElevation + 10,
                 "над полом " + floorElevation + ", над стеной " + wallElevation);
@@ -195,6 +195,72 @@ class ShotPlannerTest {
         // иначе адаптация по форме утащила бы нас в зенит, от которого мы и уходили
         double elevation = plan(floor(0, 60, 60), Set.of(), ShotStyle.OVERVIEW_HIGH).elevation();
         assertTrue(elevation <= 62.0 + 1.0e-6, "подъём " + elevation + " — это уже вид сверху");
+    }
+
+    /** Работа едет слева направо: три окна по три блока. */
+    private static List<List<Pos>> movingFront() {
+        List<List<Pos>> steps = new ArrayList<>();
+        for (int x = 0; x < 30; x++) {
+            steps.add(List.of(new Pos(x, 0, 0), new Pos(x, 1, 0), new Pos(x, 2, 0)));
+        }
+        return steps;
+    }
+
+    @Test
+    void ведущаяКамераДержитРаботуВЦентреКадра() {
+        // Ровно то возражение, из-за которого всё переделывалось: раньше камера целилась
+        // в центр слоя, и к концу работа уезжала в угол кадра.
+        List<List<Pos>> steps = movingFront();
+        List<Pos> targets = new ArrayList<>();
+        steps.forEach(targets::addAll);
+
+        List<BuildTimeline.FrontSample> front = BuildTimeline.sample(steps, 0, 600);
+        ShotPlanner.Placement start = plan(targets, Set.of(), ShotStyle.MID_FOLLOW);
+        List<CameraShot> shots = ShotPlanner.followShots(targets, start, ShotStyle.MID_FOLLOW, front, 600);
+
+        assertTrue(shots.size() >= 3, "на длинный слой должно прийтись несколько кадров");
+
+        for (int i = 0; i < shots.size(); i++) {
+            CameraShot shot = shots.get(i);
+            double[] aim = front.get(i).center();
+            double[] from = {shot.x(), shot.y(), shot.z()};
+            double[] dir = CameraFraming.direction(shot.yaw(), shot.pitch());
+
+            // Сравниваем наведение по горизонтали: по вертикали прицел намеренно
+            // приподнят по правилу третей, и полное направление отличается на это смещение.
+            double dx = aim[0] - from[0], dz = aim[2] - from[2];
+            double flat = Math.hypot(dx, dz);
+            double dirFlat = Math.hypot(dir[0], dir[2]);
+
+            assertEquals(dx / flat, dir[0] / dirFlat, 1.0e-4, "кадр " + i + ": камера наведена на работу");
+            assertEquals(dz / flat, dir[2] / dirFlat, 1.0e-4, "кадр " + i);
+        }
+    }
+
+    @Test
+    void ведущаяКамераПереезжаетВследЗаРаботой() {
+        List<List<Pos>> steps = movingFront();
+        List<Pos> targets = new ArrayList<>();
+        steps.forEach(targets::addAll);
+
+        List<BuildTimeline.FrontSample> front = BuildTimeline.sample(steps, 0, 600);
+        ShotPlanner.Placement start = plan(targets, Set.of(), ShotStyle.NEAR_FOLLOW);
+        List<CameraShot> shots = ShotPlanner.followShots(targets, start, ShotStyle.NEAR_FOLLOW, front, 600);
+
+        double moved = Math.abs(shots.get(shots.size() - 1).x() - shots.get(0).x());
+        assertTrue(moved > 5, "камера должна переехать вслед за фронтом, а не стоять");
+    }
+
+    @Test
+    void опорныйПланНеВедётИостаётсяОднимКадром() {
+        List<List<Pos>> steps = movingFront();
+        List<Pos> targets = new ArrayList<>();
+        steps.forEach(targets::addAll);
+
+        List<BuildTimeline.FrontSample> front = BuildTimeline.sample(steps, 0, 600);
+        ShotPlanner.Placement start = plan(targets, Set.of(), ShotStyle.FAR_HOLD);
+
+        assertEquals(1, ShotPlanner.followShots(targets, start, ShotStyle.FAR_HOLD, front, 600).size());
     }
 
     @Test

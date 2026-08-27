@@ -103,24 +103,65 @@ public final class ShotPlanner {
     }
 
     /**
-     * Кадры движения за время слоя: для неподвижной доктрины один, для остальных два —
-     * начало и конец.
+     * Кадры на весь слой: камера ведёт работу.
+     *
+     * <p>Направление на слой выбирается <b>один раз</b> — по нему и работают все правила
+     * композиции. Дальше камера просто переезжает так, чтобы текущий фронт держался в
+     * центре кадра: если менять ещё и направление, план превратится в рыскание.
+     *
+     * <p>Прицел смешивается с центром слоя по {@link ShotStyle#contextBlend()}: у ближних
+     * доктрин — точно в работу, у дальних — с оглядкой на слой, чтобы он не выезжал за края.
+     *
+     * @param front замеры движения фронта; пустой список означает «слой снять одним кадром»
      */
-    public static List<CameraShot> movementShots(Collection<Pos> targets, Placement start,
-                                                 ShotStyle style, int endTick) {
-        List<CameraShot> shots = new ArrayList<>(2);
-        shots.add(start.shot());
-        if (!style.moving() || endTick <= start.shot().tick()) {
+    public static List<CameraShot> followShots(Collection<Pos> targets, Placement start,
+                                               ShotStyle style, List<BuildTimeline.FrontSample> front,
+                                               int endTick) {
+        List<CameraShot> shots = new ArrayList<>();
+        if (front.isEmpty() || !style.follows()) {
+            shots.add(start.shot());
+            if (style.moving() && endTick > start.shot().tick()) {
+                double[] center = centerOf(targets);
+                shots.add(place(center, radiusOf(targets, center),
+                        start.distance() * style.distanceRatio(),
+                        start.azimuth() + style.arcDegrees(), start.elevation(), endTick).shot());
+            }
             return shots;
         }
-        double[] center = centerOf(targets);
-        double radius = radiusOf(targets, center);
 
-        double azimuth = start.azimuth() + style.arcDegrees();
-        double distance = start.distance() * style.distanceRatio();
+        double[] layerCenter = centerOf(targets);
+        double layerRadius = radiusOf(targets, layerCenter);
+        double blend = style.contextBlend();
+        int total = front.size();
 
-        shots.add(place(center, radius, distance, azimuth, start.elevation(), endTick).shot());
+        for (int i = 0; i < total; i++) {
+            BuildTimeline.FrontSample sample = front.get(i);
+            double progress = total == 1 ? 0 : (double) i / (total - 1);
+
+            double[] aim = {
+                    lerp(sample.center()[0], layerCenter[0], blend),
+                    lerp(sample.center()[1], layerCenter[1], blend),
+                    lerp(sample.center()[2], layerCenter[2], blend)
+            };
+            double radius = style.frameOnFront()
+                    ? Math.max(sample.radius(), 1.5)
+                    : layerRadius;
+            double distance = start.distance() / Math.max(1.0e-6, radiusRatio(style, layerRadius, radius))
+                    * style.distanceRatio(progress);
+
+            double azimuth = start.azimuth() + style.arcDegrees() * progress;
+            shots.add(place(aim, radius, distance, azimuth, start.elevation(), sample.tick()).shot());
+        }
         return shots;
+    }
+
+    /** Во сколько раз отойти иначе, если кадрируем по фронту, а не по слою. */
+    private static double radiusRatio(ShotStyle style, double layerRadius, double radius) {
+        return style.frameOnFront() ? layerRadius / Math.max(1.0e-6, radius) : 1.0;
+    }
+
+    private static double lerp(double from, double to, double amount) {
+        return from + (to - from) * amount;
     }
 
     private static Placement place(double[] center, double radius, double distance,

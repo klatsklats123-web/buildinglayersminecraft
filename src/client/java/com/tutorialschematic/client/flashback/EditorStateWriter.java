@@ -188,9 +188,11 @@ public final class EditorStateWriter {
         keyframe.addProperty("pitch", shot.pitch());
         keyframe.addProperty("roll", 0.0f);
         keyframe.addProperty("type", "camera");
-        // Статичная доктрина держит кадр до следующего слоя и там режется насухо;
-        // пролётная едет между своими двумя кадрами плавно.
-        keyframe.addProperty("interpolation_type", style.moving() ? "SMOOTH" : "HOLD");
+        // Ведущая доктрина едет между своими кадрами плавно — иначе слежение
+        // превратится в череду рывков. Неподвижная держит кадр и режется насухо
+        // на следующем слое.
+        keyframe.addProperty("interpolation_type",
+                style.follows() || style.moving() ? "SMOOTH" : "HOLD");
         return keyframe;
     }
 }
