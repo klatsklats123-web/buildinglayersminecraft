@@ -161,7 +161,7 @@ public final class EditorStateWriter {
     private static JsonObject track(ShotStyle style, List<CameraShot> shots) {
         JsonObject byTick = new JsonObject();
         for (CameraShot shot : shots) {
-            byTick.add(Integer.toString(shot.tick()), keyframe(shot, style));
+            byTick.add(Integer.toString(shot.tick()), keyframe(shot));
         }
 
         JsonObject track = new JsonObject();
@@ -176,7 +176,7 @@ public final class EditorStateWriter {
         return track;
     }
 
-    private static JsonObject keyframe(CameraShot shot, ShotStyle style) {
+    private static JsonObject keyframe(CameraShot shot) {
         JsonArray position = new JsonArray();
         position.add(shot.x());
         position.add(shot.y());
@@ -188,11 +188,11 @@ public final class EditorStateWriter {
         keyframe.addProperty("pitch", shot.pitch());
         keyframe.addProperty("roll", 0.0f);
         keyframe.addProperty("type", "camera");
-        // Ведущая доктрина едет между своими кадрами плавно — иначе слежение
-        // превратится в череду рывков. Неподвижная держит кадр и режется насухо
-        // на следующем слое.
-        keyframe.addProperty("interpolation_type",
-                style.follows() || style.moving() ? "SMOOTH" : "HOLD");
+        // Кадр, открывающий новую фазу постройки (см. CameraShot.cut), режется насухо —
+        // ракурс там выбран заново и подъезжать к нему сплайном от старого нельзя. Кадры
+        // внутри фазы едут плавно у ведущих и с движением доктрин, а у статичных фаза
+        // всегда из одного кадра, так что для них это то же самое, что и раньше.
+        keyframe.addProperty("interpolation_type", shot.cut() ? "HOLD" : "SMOOTH");
         return keyframe;
     }
 }

@@ -169,7 +169,34 @@ public final class ShotPlanner {
             }
         }
         distance = bestDistance;
+        // Если вообще все кандидаты оказались внутри чего-то (тесная комната со всех сторон
+        // в стенах — там DISTANCE_TRIES жмёт камеру внутрь, и деться в переборе действительно
+        // некуда), победителя выбрали по остальным критериям, а он всё ещё может быть внутри
+        // блока. Тут — последняя, гарантированная проверка именно того кандидата, который
+        // реально станет кадром.
+        distance = clearOfEmbedding(center, distance, bestAzimuth, bestElevation, checks);
         return place(center, radius, distance, bestAzimuth, bestElevation, tick);
+    }
+
+    /** Отодвигает камеру назад, пока её точка не выйдет из occluders/targets всех проверок. */
+    private static double clearOfEmbedding(double[] center, double distance, double azimuth,
+                                           double elevation, List<VisibilityCheck> checks) {
+        for (int attempt = 0; attempt < 12; attempt++) {
+            double[] position = CameraFraming.positionAround(center, distance, azimuth, elevation);
+            Pos cell = cellOf(position);
+            boolean embedded = false;
+            for (VisibilityCheck check : checks) {
+                if (check.occluders().contains(cell) || check.targets().contains(cell)) {
+                    embedded = true;
+                    break;
+                }
+            }
+            if (!embedded) {
+                return distance;
+            }
+            distance *= 1.15;
+        }
+        return distance;
     }
 
     /**
@@ -190,9 +217,44 @@ public final class ShotPlanner {
             // видимость из одного места, а снимали из другого.
             double[] aim = centerOf(check.targets());
             double[] camera = CameraFraming.positionAround(aim, distance, azimuth, elevation);
+            // Точка камеры не должна оказаться внутри уже стоящего или прямо сейчас
+            // кладущегося блока — иначе она в него же и упрётся, что бы ни показал луч
+            // до цели. Раньше это никто не проверял, и на дожиме DISTANCE_TRIES камеру
+            // могло занести внутрь стены вместо того, чтобы просто зайти внутрь помещения.
+            if (isEmbedded(camera, check)) {
+                return 0;
+            }
             worst = Math.min(worst, Occlusion.visibleFraction(camera, check.targets(), check.occluders()));
         }
         return worst;
+    }
+
+    /** Клетка камеры совпала с уже стоящим или снимаемым блоком. */
+    private static boolean isEmbedded(double[] camera, VisibilityCheck check) {
+        Pos cell = cellOf(camera);
+        return check.occluders().contains(cell) || check.targets().contains(cell);
+    }
+
+    private static Pos cellOf(double[] point) {
+        return new Pos((int) Math.floor(point[0]), (int) Math.floor(point[1]), (int) Math.floor(point[2]));
+    }
+
+    /**
+     * Ставит камеру на заданный азимут без поиска — ракурс уже известен (например, идёт от
+     * фактического положения фронта постройки), перебирать варианты незачем.
+     *
+     * <p>Высоту и дистанцию сюда приносят готовыми, обычно от {@link #plan} на весь слой:
+     * они не зависят от того, с какой стороны сейчас смотрим, только от его формы и размера.
+     */
+    public static Placement placeAt(Collection<Pos> targets, double azimuth, double elevation,
+                                    double distance, int tick, Set<Pos> solid) {
+        double[] center = centerOf(targets);
+        double radius = radiusOf(targets, center);
+        // Ракурс тут не подбирается поиском, значит и отбраковки заведомо плохих кандидатов
+        // не было — без этой проверки камера точно так же может оказаться внутри блока,
+        // как раньше могла у ведущих кадров (см. clearOfBlocks в followShots).
+        double clearDistance = clearOfBlocks(center, distance, azimuth, elevation, solid);
+        return place(center, radius, clearDistance, azimuth, elevation, tick);
     }
 
     /**
@@ -210,14 +272,34 @@ public final class ShotPlanner {
     public static List<CameraShot> followShots(Collection<Pos> targets, Placement start,
                                                ShotStyle style, List<BuildTimeline.FrontSample> front,
                                                int endTick) {
+        return followShots(targets, start, style, front, endTick, Set.of());
+    }
+
+    /**
+     * То же, но с учётом того, что уже стоит в мире: расстояние здесь пересчитывается на
+     * каждый кадр под ширину фронта, и ничто раньше не мешало камере уехать точкой внутрь
+     * блока, который сама же снимает. Теперь это проверяется, и камера отодвигается назад.
+     *
+     * @param occluders блоки, внутрь которых камере заходить нельзя — прошлые слои и сам
+     *                  снимаемый слой целиком (даже то, что ещё не поставлено к этому кадру:
+     *                  безопаснее держаться подальше и от будущих блоков тоже)
+     */
+    public static List<CameraShot> followShots(Collection<Pos> targets, Placement start,
+                                               ShotStyle style, List<BuildTimeline.FrontSample> front,
+                                               int endTick, Set<Pos> occluders) {
+        Set<Pos> solid = new HashSet<>(occluders);
+        solid.addAll(targets);
+
         List<CameraShot> shots = new ArrayList<>();
         if (front.isEmpty() || !style.follows()) {
             shots.add(start.shot());
             if (style.moving() && endTick > start.shot().tick()) {
                 double[] center = centerOf(targets);
+                double azimuth = start.azimuth() + style.arcDegrees();
+                double distance = clearOfBlocks(center, start.distance() * style.distanceRatio(),
+                        azimuth, start.elevation(), solid);
                 shots.add(place(center, radiusOf(targets, center),
-                        start.distance() * style.distanceRatio(),
-                        start.azimuth() + style.arcDegrees(), start.elevation(), endTick).shot());
+                        distance, azimuth, start.elevation(), endTick).shot());
             }
             return shots;
         }
@@ -226,6 +308,9 @@ public final class ShotPlanner {
         double layerRadius = radiusOf(targets, layerCenter);
         double blend = style.contextBlend();
         int total = front.size();
+
+        double[] prevAim = null;
+        double prevDistance = 0, prevAzimuth = 0;
 
         for (int i = 0; i < total; i++) {
             BuildTimeline.FrontSample sample = front.get(i);
@@ -247,9 +332,52 @@ public final class ShotPlanner {
             // цели — со стороны это выглядит как «едет, но не смотрит на работу».
             double arc = Math.min(style.arcDegrees(), MAX_ARC_PER_STEP * Math.max(1, total - 1));
             double azimuth = start.azimuth() + arc * progress;
-            shots.add(place(aim, radius, distance, azimuth, start.elevation(), sample.tick()).shot());
+            distance = clearOfBlocks(aim, distance, azimuth, start.elevation(), solid);
+
+            // Проверенные концы отрезка ещё не значат безопасный сплайн между ними: Flashback
+            // ведёт кадры Catmull-Rom-кривой, а она умеет выгибаться за пределы прямой между
+            // двумя точками — особенно на повороте вокруг угла. Прямой середины отрезка
+            // недостаточно, чтобы доказать, что кривая безопасна, но если даже она уже внутри
+            // блока — кривая тем более где-то заденет, и плавный проезд подменяется резким
+            // резом: это не так красиво, зато не сквозь стену.
+            boolean cut = false;
+            if (prevAim != null) {
+                double[] midAim = {
+                        (prevAim[0] + aim[0]) / 2, (prevAim[1] + aim[1]) / 2, (prevAim[2] + aim[2]) / 2
+                };
+                double midDistance = (prevDistance + distance) / 2;
+                double midAzimuth = prevAzimuth + shortestTurn(azimuth - prevAzimuth) / 2;
+                double[] midPosition = CameraFraming.positionAround(midAim, midDistance, midAzimuth, start.elevation());
+                cut = solid.contains(cellOf(midPosition));
+            }
+
+            CameraShot shot = place(aim, radius, distance, azimuth, start.elevation(), sample.tick()).shot();
+            shots.add(cut ? shot.withCut(true) : shot);
+
+            prevAim = aim;
+            prevDistance = distance;
+            prevAzimuth = azimuth;
         }
         return shots;
+    }
+
+    /**
+     * Отодвигает камеру назад по тому же лучу, пока её точка не выйдет из {@code solid}.
+     *
+     * <p>Геометрический подбор ракурса ({@link #plan}) сюда не заглядывает — он выбирает
+     * направление один раз в начале слоя, а не на каждый кадр движения, поэтому кадрам
+     * следом за фронтом нужна собственная проверка.
+     */
+    private static double clearOfBlocks(double[] aim, double distance, double azimuth,
+                                        double elevation, Set<Pos> solid) {
+        for (int attempt = 0; attempt < 12; attempt++) {
+            double[] position = CameraFraming.positionAround(aim, distance, azimuth, elevation);
+            if (!solid.contains(cellOf(position))) {
+                return distance;
+            }
+            distance *= 1.15;
+        }
+        return distance;
     }
 
     /** Во сколько раз отойти иначе, если кадрируем по фронту, а не по слою. */
@@ -269,7 +397,7 @@ public final class ShotPlanner {
         double[] aim = {center[0], center[1] + radius * 0.18, center[2]};
         float[] angles = CameraFraming.lookAt(position, aim);
         return new Placement(
-                new CameraShot(tick, position[0], position[1], position[2], angles[0], angles[1]),
+                new CameraShot(tick, position[0], position[1], position[2], angles[0], angles[1], false),
                 azimuth, elevation, distance);
     }
 
@@ -315,7 +443,7 @@ public final class ShotPlanner {
     }
 
     /** Кратчайший разворот в градусах, от -180 до 180. */
-    static double shortestTurn(double degrees) {
+    public static double shortestTurn(double degrees) {
         return ((degrees % 360) + 540) % 360 - 180;
     }
 
@@ -336,7 +464,7 @@ public final class ShotPlanner {
      * <b>насколько плотно занят пол габарита</b>. У плиты он около единицы, у кольца стен
      * около четверти, и подъём для кольца почти исчезает.
      */
-    static double flatness(Collection<Pos> blocks) {
+    public static double flatness(Collection<Pos> blocks) {
         if (blocks.isEmpty()) {
             return 0;
         }
@@ -361,7 +489,7 @@ public final class ShotPlanner {
         return lowness * fill;
     }
 
-    static double[] centerOf(Collection<Pos> blocks) {
+    public static double[] centerOf(Collection<Pos> blocks) {
         if (blocks.isEmpty()) {
             return new double[]{0, 0, 0};
         }
@@ -374,8 +502,13 @@ public final class ShotPlanner {
         return new double[]{x / blocks.size(), y / blocks.size(), z / blocks.size()};
     }
 
-    static double radiusOf(Collection<Pos> blocks, double[] center) {
-        double max = 1;
+    public static double radiusOf(Collection<Pos> blocks, double[] center) {
+        // Пол блока — заведомо плохой пол: на крохотной кучке блоков (обрезок одного
+        // столбика) дистанция считается от радиуса, и с самым близким DISTANCE_TRIES
+        // могла схлопнуться меньше блока — снаружи в упор ставить камеру уже некуда,
+        // и поиск подбирал «наименее плохой» вариант прямо внутри геометрии. 2.5 —
+        // это уже кадр с запасом, показывающий предмет не одной его текстурой на весь экран.
+        double max = 2.5;
         for (Pos pos : blocks) {
             double dx = pos.x() + 0.5 - center[0];
             double dy = pos.y() + 0.5 - center[1];
