@@ -5,6 +5,7 @@ import com.tutorialschematic.client.build.BuildRunner;
 import com.tutorialschematic.client.flashback.CameraExport;
 import com.tutorialschematic.client.flashback.FlashbackBridge;
 import com.tutorialschematic.client.flashback.RecordedBuild;
+import com.tutorialschematic.client.selection.FillMaterial;
 import com.tutorialschematic.client.selection.SelectionWand;
 import com.tutorialschematic.io.SchematicFiles;
 import com.tutorialschematic.schematic.BuildLayer;
@@ -205,6 +206,29 @@ public class MainMenuScreen extends Screen {
                 .build();
         clearLayer.active = active != null && !active.isEmpty();
         addRenderableWidget(clearLayer);
+
+        y += 22;
+        // Заполнение пустоты — рядом с режимом выделения: это тоже про то, что заберёт клик.
+        String fillMaterial = FillMaterial.heldName();
+        Button fill = Button.builder(
+                        Component.literal(state.fillEmpty()
+                                ? "Пустота: " + (fillMaterial == null ? "нет блока" : fillMaterial)
+                                : "Пустота: не трогать"),
+                        b -> {
+                            state.setFillEmpty(!state.fillEmpty());
+                            rebuildWidgets();
+                        })
+                .bounds(x, y, fullWidth, 18)
+                .tooltip(Tooltip.create(Component.literal(
+                        "Разметка берёт из мира то, что там уже стоит, а пустые места пропускает. "
+                                + "У пола из-за этого дырки в разметке так дырками и строятся.\n\n"
+                                + "С включённым заполнением коробка забирает и пустые места, "
+                                + "закрывая их блоком из ЛЕВОЙ руки — правая занята инструментом.\n\n"
+                                + "Работает на режиме «Две точки»: наводиться на пустоту нечем, "
+                                + "её можно только обвести.")))
+                .build();
+        fill.active = has;
+        addRenderableWidget(fill);
 
         y += 22;
         Button visibility = Button.builder(

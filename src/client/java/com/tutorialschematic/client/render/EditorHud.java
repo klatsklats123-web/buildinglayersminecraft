@@ -3,6 +3,7 @@ package com.tutorialschematic.client.render;
 import com.tutorialschematic.TutorialSchematicMod;
 import com.tutorialschematic.client.EditorState;
 import com.tutorialschematic.client.build.BuildRunner;
+import com.tutorialschematic.client.selection.FillMaterial;
 import com.tutorialschematic.client.selection.SelectionWand;
 import com.tutorialschematic.schematic.BuildLayer;
 import com.tutorialschematic.schematic.TutorialSchematic;
@@ -98,6 +99,16 @@ public final class EditorHud {
                     // управление держим на экране: какая кнопка что делает — самый частый вопрос
                     lines.add(state.mode().controls());
                     colors.add(DIM);
+                }
+
+                // Включённое заполнение меняет то, что заберёт коробка, поэтому о нём надо
+                // говорить всегда: забыть про него легко, а лишний объём в слое заметен не сразу.
+                if (state.fillEmpty()) {
+                    String material = FillMaterial.heldName();
+                    lines.add(material == null
+                            ? "Пустота: возьмите блок в ЛЕВУЮ руку"
+                            : "Пустота заполняется: " + material);
+                    colors.add(material == null ? WARN : OK);
                 }
             }
         }

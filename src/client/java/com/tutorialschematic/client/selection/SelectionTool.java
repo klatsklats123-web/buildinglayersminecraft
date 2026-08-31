@@ -162,9 +162,17 @@ public final class SelectionTool {
         TutorialSchematic schematic = state.schematic();
         List<BlockPos> added = new ArrayList<>();
         int movedFromOtherLayer = 0;
+        int filled = 0;
 
+        BlockState fill = fillState();
         for (BlockPos pos : positions) {
             BlockData data = capture(level, pos);
+            boolean fromFill = false;
+            if (data == null && fill != null) {
+                // пустое место закрываем выбранным блоком — иначе в полу останется дырка
+                data = new BlockData(fill, null);
+                fromFill = true;
+            }
             if (data == null) {
                 continue;
             }
@@ -179,6 +187,9 @@ public final class SelectionTool {
             }
             if (layer.add(pos, data)) {
                 added.add(pos.immutable());
+                if (fromFill) {
+                    filled++;
+                }
             }
         }
 
@@ -191,6 +202,11 @@ public final class SelectionTool {
                 + layer.blockCount() + ")");
         if (movedFromOtherLayer > 0) {
             message.append(", перенесено из других слоёв: ").append(movedFromOtherLayer);
+        }
+        if (filled > 0) {
+            // Сколько взято из мира, а сколько дорисовано, надо видеть сразу: заполнение
+            // легко забыть выключить, и тогда коробка тащит в слой лишний объём.
+            message.append(", заполнено пустых: ").append(filled);
         }
         EditorState.actionBar(message.toString());
     }
@@ -456,18 +472,31 @@ public final class SelectionTool {
             return List.of();
         }
 
+        // С включённым заполнением пустые места тоже идут в дело: их закроет блок из левой
+        // руки. Без него коробка, как и раньше, забирает только то, что в мире уже стоит.
+        boolean keepAir = fillState() != null;
+
         List<BlockPos> result = new ArrayList<>();
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
                 for (int z = minZ; z <= maxZ; z++) {
                     BlockPos pos = new BlockPos(x, y, z);
-                    if (!level.getBlockState(pos).isAir()) {
+                    if (keepAir || !level.getBlockState(pos).isAir()) {
                         result.add(pos);
                     }
                 }
             }
         }
         return result;
+    }
+
+    /**
+     * Блок, которым сейчас закрывают пустоту, либо {@code null}, если заполнение выключено
+     * или в левой руке не блок.
+     */
+    @Nullable
+    private static BlockState fillState() {
+        return EditorState.get().fillEmpty() ? FillMaterial.heldState() : null;
     }
 
     /**

@@ -41,6 +41,7 @@ public final class EditorState {
     private BlockPos boxCorner;
 
     private boolean markupEnabled;
+    private boolean fillEmpty;
     private boolean showOnlyActiveLayer;
     private boolean highlightsVisible = true;
     private boolean autoClear;
@@ -179,6 +180,22 @@ public final class EditorState {
         if (!enabled) {
             this.boxCorner = null;
         }
+    }
+
+    /**
+     * Закрывать ли пустые места блоком из левой руки.
+     *
+     * <p>Обычно разметка берёт только то, что уже стоит в мире. Для пола этого мало: дырки
+     * в размеченном прямоугольнике так дырками и построятся. С включённым заполнением
+     * пустые места забирает блок из левой руки — см. {@link
+     * com.tutorialschematic.client.selection.FillMaterial}.
+     */
+    public boolean fillEmpty() {
+        return fillEmpty;
+    }
+
+    public void setFillEmpty(boolean value) {
+        this.fillEmpty = value;
     }
 
     public boolean showOnlyActiveLayer() {
