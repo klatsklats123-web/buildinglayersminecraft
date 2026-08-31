@@ -11,6 +11,7 @@ import com.tutorialschematic.camera.ScenePlanner;
 import com.tutorialschematic.camera.ShotPlanner;
 import com.tutorialschematic.camera.ShotStyle;
 import com.tutorialschematic.client.EditorState;
+import com.tutorialschematic.client.ModSettings;
 import com.tutorialschematic.order.Pos;
 import com.tutorialschematic.schematic.BuildLayer;
 import com.tutorialschematic.schematic.TutorialSchematic;
@@ -103,8 +104,16 @@ public final class CameraExport {
             return null;
         }
 
-        Map<ShotStyle, List<CameraShot>> tracks = planTracks(schematic, timings);
-        Path written = EditorStateWriter.write(meta.uuid(), tracks);
+        // Между записью и расстановкой камер могли выйти из игры — журнал замеров лежит
+        // на диске и переживает это.
+        BuildTicks.loadIfEmpty();
+
+        // Тот же угол, по которому подбирали расстояние до стены, уходит и в настройки
+        // записи — иначе рендер возьмёт свой, и кадр разъедется с расчётом.
+        double fov = Minecraft.getInstance().options.fov().get();
+        Map<ShotStyle, List<CameraShot>> tracks = planTracks(schematic, timings, fov);
+        Path written = EditorStateWriter.write(meta.uuid(), tracks, fov, TARGET_ASPECT,
+                ModSettings.get().replayTimeOfDay());
         if (written == null) {
             EditorState.error("Камеры не записаны — состояние редактора для этого реплея уже есть");
             return null;
@@ -115,7 +124,9 @@ public final class CameraExport {
         // если после правки алгоритма число не изменилось, экспорт либо не запускался
         // заново, либо файл кто-то переписал поверх (см. NOTES.md про автосохранение Flashback).
         EditorState.info("Камеры расставлены: " + timings.size() + " слоёв, "
-                + tracks.size() + " дорожек, " + totalShots + " кадров. Реплей: " + replay.getFileName());
+                + tracks.size() + " дорожек, " + totalShots + " кадров"
+                + (BuildTicks.hasMeasurements() ? ", время замеренное" : ", время по меткам")
+                + ". Реплей: " + replay.getFileName());
         return written;
     }
 
@@ -171,8 +182,8 @@ public final class CameraExport {
     }
 
     private static Map<ShotStyle, List<CameraShot>> planTracks(TutorialSchematic schematic,
-                                                               List<LayerTiming> timings) {
-        double fov = Minecraft.getInstance().options.fov().get();
+                                                               List<LayerTiming> timings,
+                                                               double fov) {
         Map<ShotStyle, List<CameraShot>> tracks = new EnumMap<>(ShotStyle.class);
         for (ShotStyle style : ShotStyle.values()) {
             tracks.put(style, new ArrayList<>());
@@ -230,6 +241,12 @@ public final class CameraExport {
             int buildEnd = Math.max(buildStart + 1, timing.endTick() - layer.endDelayTicks());
             List<LayerShots.Unit> layerUnits =
                     LayerShots.split(steps, buildStart, buildEnd, globalStep, done);
+
+            // Нарезка знает только номера шагов; когда эти шаги встали на самом деле, знает
+            // журнал замеров. Если он от этой записи — время ракурсов берётся оттуда, и
+            // граница перестаёт зависеть от того, ровно ли шла кладка.
+            layerUnits = BuildTicks.retime(timing.index(), layerUnits, globalStep, steps.size(),
+                    timing.startTick(), buildEnd);
 
             // А вот первый кадр слоя должен стоять уже на метке — задержка в начале для того
             // и нужна, чтобы камера успела встать до первого блока.

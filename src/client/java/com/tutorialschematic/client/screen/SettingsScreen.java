@@ -31,6 +31,7 @@ public class SettingsScreen extends Screen {
     private final Screen parent;
     private EditBox startBox;
     private EditBox endBox;
+    private EditBox timeBox;
     private String applied = "";
 
     private int panelX, panelY, panelWidth, panelHeight;
@@ -43,7 +44,7 @@ public class SettingsScreen extends Screen {
     @Override
     protected void init() {
         panelWidth = Math.min(360, width - 40);
-        panelHeight = 190;
+        panelHeight = 244;
         panelX = (width - panelWidth) / 2;
         panelY = Math.max(30, (height - panelHeight) / 2);
 
@@ -67,6 +68,17 @@ public class SettingsScreen extends Screen {
                         "Пропишет эти задержки во все слои открытой схемы. Схему после этого надо сохранить.")))
                 .build());
 
+        // Время суток уходит в настройки записи при расстановке камер: за несколько минут
+        // постройки солнце успевает уйти, и свет плывёт посреди ролика.
+        timeBox = numberBox(fieldX, y + 108, settings.replayTimeOfDay(), value -> {
+            settings.setReplayTimeOfDay(value);
+            settings.save();
+        });
+        timeBox.setTooltip(Tooltip.create(Component.literal(
+                "Время суток, на котором держать запись при экспорте камер.\n\n"
+                        + "0 — рассвет, 6000 — полдень, 12000 — закат, 18000 — полночь.\n\n"
+                        + "Минус единица — не трогать, солнце пойдёт своим ходом.")));
+
         addRenderableWidget(Button.builder(Component.literal("Готово"), b -> onClose())
                 .bounds(panelX + panelWidth / 2 - 50, panelY + panelHeight - 28, 100, 20)
                 .build());
@@ -77,7 +89,12 @@ public class SettingsScreen extends Screen {
         box.setValue(String.valueOf(value));
         box.setResponder(text -> {
             try {
-                onChange.accept(Integer.parseInt(text.trim()));
+                // Минус — часть числа: «не трогать» здесь задают минус единицей.
+                String trimmed = text.trim();
+                if (trimmed.isEmpty() || "-".equals(trimmed)) {
+                    return;
+                }
+                onChange.accept(Integer.parseInt(trimmed));
             } catch (NumberFormatException ignored) {
                 // недописанное число — просто ждём, пока допишут
             }
@@ -114,9 +131,33 @@ public class SettingsScreen extends Screen {
         graphics.text(font, "Задержка в начале слоя:", panelX + 12, y, TEXT);
         graphics.text(font, "Задержка в конце слоя:", panelX + 12, y + 26, TEXT);
 
+        graphics.fill(panelX + 12, y + 92, panelX + panelWidth - 12, y + 93, PANEL_BORDER);
+        graphics.text(font, Component.literal("Съёмка").withStyle(ChatFormatting.BOLD),
+                panelX + 12, y + 82, TEXT);
+        graphics.text(font, "Время суток:", panelX + 12, y + 113, TEXT);
+        graphics.text(font, timeHint(ModSettings.get().replayTimeOfDay()),
+                panelX + 12, y + 129, TEXT_DIM);
+
         if (!applied.isEmpty()) {
             graphics.text(font, applied, panelX + 12, panelY + panelHeight - 46, ACCENT);
         }
+    }
+
+    /** Что означает выставленное число — иначе «6000» ни о чём не говорит. */
+    private static String timeHint(int time) {
+        if (time < 0) {
+            return "не трогать — солнце пойдёт своим ходом";
+        }
+        if (time < 3000) {
+            return "утро";
+        }
+        if (time < 9000) {
+            return "полдень — меньше всего резких теней";
+        }
+        if (time < 13000) {
+            return "закат";
+        }
+        return "ночь";
     }
 
     @Override

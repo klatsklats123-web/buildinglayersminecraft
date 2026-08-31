@@ -36,6 +36,8 @@ public final class FlashbackBridge {
     private static Method startRecordingMethod;
     private static Method finishRecordingMethod;
     private static Constructor<?> markerConstructor;
+    private static Field writtenTicksField;
+    private static boolean tickFieldMissing;
     private static boolean warned;
 
     private FlashbackBridge() {
@@ -75,6 +77,41 @@ public final class FlashbackBridge {
     /** Идёт ли запись прямо сейчас. */
     public static boolean isRecording() {
         return recorder() != null;
+    }
+
+    /**
+     * Сколько тиков уже записано, либо -1, если узнать не удалось.
+     *
+     * <p>Своего счётчика Flashback наружу не отдаёт, а он нам нужен: по нему {@code addMarker}
+     * и кладёт метки, то есть это ровно та шкала, в которой потом стоят камеры. Без него
+     * время каждого ракурса приходится <i>вычислять</i> пропорцией между двумя метками, и
+     * любая заминка в кладке — подгрузка чанков, рывок сервера — разводит расчёт с тем, что
+     * происходило на самом деле.
+     *
+     * <p>Поле приватное, читаем рефлексией. Миксин был бы быстрее, но здесь это чтение
+     * одного {@code int} раз в тик, а рефлексия ломается мягко: перестанет находить поле —
+     * потеряем точное время и вернёмся к меткам, а не уроним игру. Остальной мост устроен
+     * так же, и заводить ради одного поля миксины со своим конфигом смысла нет.
+     */
+    public static int recordingTick() {
+        Object recorder = recorder();
+        if (recorder == null || tickFieldMissing) {
+            return -1;
+        }
+        try {
+            if (writtenTicksField == null) {
+                Field field = recorder.getClass().getDeclaredField("writtenTicks");
+                field.setAccessible(true);
+                writtenTicksField = field;
+            }
+            return writtenTicksField.getInt(recorder);
+        } catch (Throwable e) {
+            tickFieldMissing = true;
+            TutorialSchematicMod.LOGGER.warn(
+                    "Счётчик тиков Flashback не читается, время камер пойдёт по меткам: {}",
+                    e.getMessage());
+            return -1;
+        }
     }
 
     /** Снят ли слепок мира. Пока не снят, строить рано — начало постройки в запись не попадёт. */

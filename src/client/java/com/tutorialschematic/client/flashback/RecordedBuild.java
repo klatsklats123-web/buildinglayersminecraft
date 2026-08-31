@@ -87,6 +87,9 @@ public final class RecordedBuild {
     }
 
     private static void tick() {
+        // Счётчик записи живёт у клиента, а постройка идёт на потоке сервера. Снимаем его
+        // здесь, на клиентском тике, чтобы постройке досталось готовое значение.
+        BuildTicks.poll();
         if (tailLeft >= 0 && --tailLeft < 0) {
             ownsRecording = false;
             if (FlashbackBridge.finishRecording()) {

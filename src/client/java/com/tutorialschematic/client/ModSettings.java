@@ -32,6 +32,15 @@ public final class ModSettings {
     /** Задержка после последнего блока нового слоя, в тиках. */
     private int defaultEndDelayTicks = 20;
 
+    /**
+     * Время суток, на котором держать запись при экспорте; -1 — не трогать.
+     *
+     * <p>Постройка идёт минутами, и за это время солнце успевает уйти: тени разворачиваются,
+     * яркость плывёт внутри одного ролика. Полдень выбран по умолчанию потому, что при нём
+     * меньше всего резких теней на стенах.
+     */
+    private int replayTimeOfDay = 6000;
+
     private ModSettings() {
     }
 
@@ -56,6 +65,15 @@ public final class ModSettings {
 
     public void setDefaultEndDelayTicks(int ticks) {
         this.defaultEndDelayTicks = clamp(ticks);
+    }
+
+    public int replayTimeOfDay() {
+        return replayTimeOfDay;
+    }
+
+    /** Сутки — 24000 тиков. Всё, что вне их, считаем за «не трогать». */
+    public void setReplayTimeOfDay(int time) {
+        this.replayTimeOfDay = time < 0 || time >= 24000 ? -1 : time;
     }
 
     private static int clamp(int ticks) {
@@ -84,6 +102,9 @@ public final class ModSettings {
             if (json.has("defaultEndDelayTicks")) {
                 settings.setDefaultEndDelayTicks(json.get("defaultEndDelayTicks").getAsInt());
             }
+            if (json.has("replayTimeOfDay")) {
+                settings.setReplayTimeOfDay(json.get("replayTimeOfDay").getAsInt());
+            }
         } catch (Exception e) {
             // Битый файл настроек не повод не запускаться: берём значения по умолчанию.
             TutorialSchematicMod.LOGGER.warn("Не удалось прочитать настройки: {}", e.getMessage());
@@ -95,6 +116,7 @@ public final class ModSettings {
         JsonObject json = new JsonObject();
         json.addProperty("defaultStartDelayTicks", defaultStartDelayTicks);
         json.addProperty("defaultEndDelayTicks", defaultEndDelayTicks);
+        json.addProperty("replayTimeOfDay", replayTimeOfDay);
         try {
             Path path = file();
             Files.createDirectories(path.getParent());
