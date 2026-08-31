@@ -37,8 +37,43 @@ public final class ShotPlanner {
     private static final int ELEVATION_STEPS = 5;
     private static final int MAX_SAMPLES = 160;
 
+    /**
+     * Вокруг якорных азимутов (перпендикуляров к фронту постройки) добавляем эту россыпь
+     * кандидатов поверх обычного круга — чтобы там, где якорь и так побеждает, у него было
+     * из чего выбрать поточнее. Сам круг при этом никуда не девается: якорь — это слагаемое
+     * в оценке, а не ограничение перебора, иначе поиск не сможет уйти от столба, который
+     * случайно оказался как раз в направлении якоря (было и оказалось реальным регрессом
+     * видимости — см. историю).
+     */
+    private static final double ANCHOR_WINDOW = 50.0;
+    private static final int ANCHOR_SAMPLES = 7;
+    /**
+     * Вес направления на фронт постройки. Подбирать его как противовес видимости на глаз не
+     * получилось: любое фиксированное число либо давало реальный регресс видимости там, где
+     * в сторону якоря случайно смотрел столб, либо было слишком слабым, чтобы всерьёз
+     * развернуть камеру к фронту. Поэтому бонус включается только при {@link #FACING_MIN_VISIBILITY}
+     * и выше — среди кандидатов, которые и так хорошо видно, решает направление; там, где видно
+     * плохо, направление вообще не участвует в споре, и решает чистая видимость.
+     */
+    private static final double FACING_WEIGHT = 2.5;
+    /** За этим углом от ближайшего якоря направление на фронт уже ничего не значит. */
+    private static final double FACING_FALLOFF = 90.0;
+    /** Ниже этой видимости бонус за направление не действует — см. {@link #FACING_WEIGHT}. */
+    private static final double FACING_MIN_VISIBILITY = 0.75;
+
     /** Видимость важнее композиции, поэтому её вес на порядок больше. */
     private static final double VISIBILITY_WEIGHT = 10.0;
+
+    /**
+     * Попадание в кадр — такое же жёсткое требование, как видимость, и вес у него того же
+     * порядка.
+     *
+     * <p>Без этого члена посадка в кадр не значила ничего: {@link #DISTANCE_TRIES} подъезжает
+     * ближе ради видимости, и кандидат, обрезающий половину снимаемого, спокойно выигрывал —
+     * видимость у него считалась лучше, а за обрезку никто не штрафовал. Блок, который ставят
+     * прямо сейчас, а его не видно за краем экрана, — такой же брак, как блок за стеной.
+     */
+    private static final double FRAMING_WEIGHT = 9.0;
     /** Ближе этого угла к предыдущему плану ставить нельзя — склейка читается рывком. */
     private static final double MIN_TURN = 30;
     /** Дальше этого — перескок через ось, движение в кадре перевернётся. */
@@ -64,6 +99,27 @@ public final class ShotPlanner {
     private static final double[] DISTANCE_TRIES = {1.0, 0.72, 0.5, 0.34, 0.22};
     /** Штраф за каждый шаг сближения: задуманную крупность бросаем неохотно. */
     private static final double CLOSER_PENALTY = 0.35;
+
+    /**
+     * Соотношение сторон по умолчанию — горизонтальное видео. Съёмка под шортс передаёт
+     * своё: вертикальный кадр почти вдвое уже, и посадка в него совсем другая.
+     */
+    public static final double DEFAULT_ASPECT = 16.0 / 9.0;
+
+    /**
+     * Правило третей: целимся выше геометрического центра на эту долю радиуса, чтобы
+     * постройка села в нижние две трети кадра, а не делила его пополам.
+     */
+    private static final double AIM_LIFT = 0.18;
+
+    /**
+     * Во сколько раз максимум разрешено отойти ради того, чтобы всё влезло в кадр.
+     *
+     * <p>У сцены, которая окружает камеру (интерьер по кольцу вдоль стен), «влезло всё» не
+     * достигается ни на каком расстоянии — не будь потолка, камера уезжала бы в бесконечность
+     * вместо того, чтобы честно снять то, что снять можно.
+     */
+    private static final double MAX_FIT_GROWTH = 2.5;
 
     /** На сколько градусов поднимаем камеру над плоским слоем. */
     private static final double FLAT_LIFT = 25;
@@ -121,9 +177,78 @@ public final class ShotPlanner {
     public static Placement plan(Collection<Pos> targets, List<VisibilityCheck> checks,
                                  ShotStyle style, double fovDegrees, int tick,
                                  double previousAzimuth, List<Double> avoid) {
+        return plan(targets, checks, style, fovDegrees, tick, previousAzimuth, avoid, List.of());
+    }
+
+    /**
+     * То же, но с якорями по направлению фронта постройки — азимуты рядом с якорем получают
+     * бонус к оценке, как и «три четверти» или разворот от предыдущего плана.
+     *
+     * <p>Это именно бонус, а не ограничение перебора: круг всё равно проверяется целиком.
+     * Первая версия резала поиск до узких окон вокруг якорей и на реальных данных дала
+     * настоящий регресс видимости — ровно там, где в направлении якоря случайно стоял столб,
+     * а с другой стороны было чисто, поиск больше не мог туда уйти. Бонус слабее видимости
+     * (см. {@link #FACING_WEIGHT} против {@link #VISIBILITY_WEIGHT}), поэтому решает спор
+     * только между визуально близкими кандидатами, а не пересиливает разницу в видимости.
+     *
+     * <p>Обычно сюда приходят два якоря — по перпендикуляру в каждую сторону от направления
+     * фронта: снаружи для внешней стены, изнутри для того же кольца, но с другой стороны — и
+     * то, какой из них в итоге победит, решает та же проверка видимости, что и всегда, а не
+     * жёсткое правило «снаружи/изнутри».
+     *
+     * @param azimuthAnchors направления, которым отдаётся предпочтение; пустой список — как
+     *                       если бы якорей не было вовсе (поведение не меняется)
+     */
+    public static Placement plan(Collection<Pos> targets, List<VisibilityCheck> checks,
+                                 ShotStyle style, double fovDegrees, int tick,
+                                 double previousAzimuth, List<Double> avoid,
+                                 List<Double> azimuthAnchors) {
+        return plan(targets, checks, style, fovDegrees, tick, previousAzimuth, avoid,
+                azimuthAnchors, DEFAULT_ASPECT);
+    }
+
+    /**
+     * То же, но под конкретное соотношение сторон итогового видео.
+     *
+     * @param aspect ширина, делённая на высоту: 16/9 для горизонтального, 9/16 для шортса.
+     *               Вертикальный кадр почти вдвое уже, и то, что спокойно помещалось в
+     *               горизонтальный, в шортсе оказывается за краем — поэтому дистанция
+     *               считается точной посадкой в кадр, а не вписыванием шара по одному
+     *               вертикальному углу обзора.
+     */
+    public static Placement plan(Collection<Pos> targets, List<VisibilityCheck> checks,
+                                 ShotStyle style, double fovDegrees, int tick,
+                                 double previousAzimuth, List<Double> avoid,
+                                 List<Double> azimuthAnchors, double aspect) {
+        return plan(targets, checks, style, fovDegrees, tick, previousAzimuth, avoid,
+                azimuthAnchors, aspect, null);
+    }
+
+    /**
+     * То же, но камера обязана стоять снаружи габарита постройки.
+     *
+     * <p>Это смена параметризации, а не ещё один вес в оценке. Камера по-прежнему ищется
+     * на луче «от прицела наружу», но дистанция вдоль луча снизу ограничена выходом из
+     * габарита: кандидатов внутри дома просто не существует, и видимости больше не с чем
+     * спорить. Раньше она честно загоняла камеру внутрь — изнутри кольцо стен видно со
+     * всех сторон разом, а вес видимости самый большой; никакой контр-вес это стабильно
+     * не перевешивал (см. историю: любое фиксированное число либо давало регресс видимости,
+     * либо не разворачивало камеру).
+     *
+     * @param keepOutsideOf габарит, внутри которого камере стоять нельзя; {@code null} —
+     *                      без ограничения (интерьер снимается изнутри, ему сюда передают
+     *                      именно {@code null}, а не огибающую комнаты)
+     */
+    public static Placement plan(Collection<Pos> targets, List<VisibilityCheck> checks,
+                                 ShotStyle style, double fovDegrees, int tick,
+                                 double previousAzimuth, List<Double> avoid,
+                                 List<Double> azimuthAnchors, double aspect,
+                                 BuildEnvelope keepOutsideOf) {
         double[] center = centerOf(targets);
         double radius = radiusOf(targets, center);
-        double distance = CameraFraming.distanceFor(radius, fovDegrees, style.margin());
+        double baseDistance = CameraFraming.distanceFor(radius, fovDegrees, 1.0);
+        double aimOffsetY = radius * AIM_LIFT;
+        double safeZone = style.safeZone();
 
         List<VisibilityCheck> sampled = new ArrayList<>();
         for (VisibilityCheck check : checks) {
@@ -131,6 +256,7 @@ public final class ShotPlanner {
                 sampled.add(new VisibilityCheck(sample(check.targets()), check.occluders()));
             }
         }
+        List<double[]> framePoints = pointsOf(sample(targets));
 
         double lift = FLAT_LIFT * flatness(targets);
         double minElevation = Math.min(style.minElevation() + lift, ELEVATION_CEILING);
@@ -139,24 +265,42 @@ public final class ShotPlanner {
         double bestScore = Double.NEGATIVE_INFINITY;
         double bestAzimuth = 45;
         double bestElevation = (minElevation + maxElevation) / 2;
-        double bestDistance = distance;
+        double bestDistance = baseDistance;
 
-        for (int d = 0; d < DISTANCE_TRIES.length; d++) {
-            double tryDistance = distance * DISTANCE_TRIES[d];
-            double closerPenalty = CLOSER_PENALTY * d;
+        List<Double> azimuths = azimuthCandidates(azimuthAnchors);
+        for (double azimuth : azimuths) {
+            for (int e = 0; e < ELEVATION_STEPS; e++) {
+                double elevation = minElevation
+                        + e * (maxElevation - minElevation) / (ELEVATION_STEPS - 1);
 
-            for (int a = 0; a < AZIMUTH_STEPS; a++) {
-                double azimuth = a * 360.0 / AZIMUTH_STEPS;
-                for (int e = 0; e < ELEVATION_STEPS; e++) {
-                    double elevation = minElevation
-                            + e * (maxElevation - minElevation) / (ELEVATION_STEPS - 1);
+                // Своя дистанция на каждое направление, а не одна на всю сцену: длинная стена
+                // с торца и она же анфас требуют совершенно разного отхода, и вписывание шара
+                // этой разницы не видело в принципе.
+                double fitted = CameraFraming.distanceToFit(framePoints, center, aimOffsetY,
+                        azimuth, elevation, fovDegrees, aspect, safeZone, baseDistance, MAX_FIT_GROWTH);
 
-                    double visibility = visibilityAcross(tryDistance, azimuth, elevation, sampled, style);
+                // Порог выхода из габарита — снизу под все пробы дистанции этого направления:
+                // сближение ради видимости упирается в стену дома снаружи, а не проходит её.
+                double exit = keepOutsideOf == null ? 0
+                        : keepOutsideOf.exitDistance(center, azimuth, elevation);
+
+                for (int d = 0; d < DISTANCE_TRIES.length; d++) {
+                    double tryDistance = Math.max(fitted * DISTANCE_TRIES[d], exit);
+                    double closerPenalty = CLOSER_PENALTY * d;
+
+                    double visibility = visibilityAcross(center, tryDistance, azimuth, elevation,
+                            sampled, style);
+                    double framed = framedFraction(framePoints, center, aimOffsetY, tryDistance,
+                            azimuth, elevation, fovDegrees, aspect, safeZone);
+                    double facing = visibility >= FACING_MIN_VISIBILITY
+                            ? facingScore(azimuth, azimuthAnchors) : 0;
                     double score = visibility * VISIBILITY_WEIGHT
+                            + framed * FRAMING_WEIGHT
                             + threeQuarterScore(azimuth)
                             + elevationScore(elevation, minElevation, maxElevation)
                             + turnScore(azimuth, previousAzimuth)
                             + spreadScore(azimuth, avoid)
+                            + FACING_WEIGHT * facing
                             - closerPenalty;
 
                     if (score > bestScore) {
@@ -168,7 +312,7 @@ public final class ShotPlanner {
                 }
             }
         }
-        distance = bestDistance;
+        double distance = bestDistance;
         // Если вообще все кандидаты оказались внутри чего-то (тесная комната со всех сторон
         // в стенах — там DISTANCE_TRIES жмёт камеру внутрь, и деться в переборе действительно
         // некуда), победителя выбрали по остальным критериям, а он всё ещё может быть внутри
@@ -205,18 +349,27 @@ public final class ShotPlanner {
      * <p>Именно худшая, а не средняя: направление, из которого в конце слоя не видно
      * ничего, не спасает то, что в начале было видно всё.
      */
-    private static double visibilityAcross(double distance, double azimuth, double elevation,
-                                           List<VisibilityCheck> checks, ShotStyle style) {
+    private static double visibilityAcross(double[] center, double distance, double azimuth,
+                                           double elevation, List<VisibilityCheck> checks,
+                                           ShotStyle style) {
         if (checks.isEmpty()) {
             return 1;
         }
+        double blend = style.contextBlend();
         double worst = 1;
         for (VisibilityCheck check : checks) {
-            // Камеру ставим там, где она реально окажется: у ведущих доктрин это точка
-            // вокруг самой работы, у статичных — вокруг центра слоя. Иначе проверяли бы
-            // видимость из одного места, а снимали из другого.
+            // Камеру ставим ровно туда, где она окажется в этот момент — по тому же правилу,
+            // по которому потом раскладываются кадры (см. followShots): статичная доктрина
+            // держится центра всей сцены, ведущая едет за работой. Раньше здесь было то одно,
+            // то другое для всех подряд, и поиск оценивал видимость из точки, откуда съёмки
+            // не будет: проверяли не то, что снимаем.
             double[] aim = centerOf(check.targets());
-            double[] camera = CameraFraming.positionAround(aim, distance, azimuth, elevation);
+            double[] evalCenter = {
+                    lerp(aim[0], center[0], blend),
+                    lerp(aim[1], center[1], blend),
+                    lerp(aim[2], center[2], blend)
+            };
+            double[] camera = CameraFraming.positionAround(evalCenter, distance, azimuth, elevation);
             // Точка камеры не должна оказаться внутри уже стоящего или прямо сейчас
             // кладущегося блока — иначе она в него же и упрётся, что бы ни показал луч
             // до цели. Раньше это никто не проверял, и на дожиме DISTANCE_TRIES камеру
@@ -287,6 +440,24 @@ public final class ShotPlanner {
     public static List<CameraShot> followShots(Collection<Pos> targets, Placement start,
                                                ShotStyle style, List<BuildTimeline.FrontSample> front,
                                                int endTick, Set<Pos> occluders) {
+        return followShots(targets, start, style, front, endTick, occluders, null);
+    }
+
+    /**
+     * То же, но камера всю дорогу держится снаружи габарита постройки.
+     *
+     * <p>Стартовый ракурс снаружи ({@link #plan} с тем же габаритом) ещё не значит, что
+     * снаружи вся раскладка: у ведущих доктрин прицел едет за фронтом и дистанция
+     * пересчитывается на каждый кадр — без собственного порога кадры в середине сцены
+     * спокойно оказывались внутри дома.
+     *
+     * @param keepOutsideOf габарит, внутри которого камере стоять нельзя; {@code null} —
+     *                      без ограничения (интерьер)
+     */
+    public static List<CameraShot> followShots(Collection<Pos> targets, Placement start,
+                                               ShotStyle style, List<BuildTimeline.FrontSample> front,
+                                               int endTick, Set<Pos> occluders,
+                                               BuildEnvelope keepOutsideOf) {
         Set<Pos> solid = new HashSet<>(occluders);
         solid.addAll(targets);
 
@@ -296,8 +467,12 @@ public final class ShotPlanner {
             if (style.moving() && endTick > start.shot().tick()) {
                 double[] center = centerOf(targets);
                 double azimuth = start.azimuth() + style.arcDegrees();
-                double distance = clearOfBlocks(center, start.distance() * style.distanceRatio(),
-                        azimuth, start.elevation(), solid);
+                double distance = start.distance() * style.distanceRatio();
+                if (keepOutsideOf != null) {
+                    distance = Math.max(distance,
+                            keepOutsideOf.exitDistance(center, azimuth, start.elevation()));
+                }
+                distance = clearOfBlocks(center, distance, azimuth, start.elevation(), solid);
                 shots.add(place(center, radiusOf(targets, center),
                         distance, azimuth, start.elevation(), endTick).shot());
             }
@@ -332,6 +507,10 @@ public final class ShotPlanner {
             // цели — со стороны это выглядит как «едет, но не смотрит на работу».
             double arc = Math.min(style.arcDegrees(), MAX_ARC_PER_STEP * Math.max(1, total - 1));
             double azimuth = start.azimuth() + arc * progress;
+            if (keepOutsideOf != null) {
+                distance = Math.max(distance,
+                        keepOutsideOf.exitDistance(aim, azimuth, start.elevation()));
+            }
             distance = clearOfBlocks(aim, distance, azimuth, start.elevation(), solid);
 
             // Проверенные концы отрезка ещё не значат безопасный сплайн между ними: Flashback
@@ -393,12 +572,53 @@ public final class ShotPlanner {
                                    double azimuth, double elevation, int tick) {
         double[] position = CameraFraming.positionAround(center, distance, azimuth, elevation);
         // Правило третей: целимся выше середины, чтобы постройка села в нижние две трети
-        // кадра, а не делила его пополам.
-        double[] aim = {center[0], center[1] + radius * 0.18, center[2]};
+        // кадра, а не делила его пополам. Ровно тот же подъём прицела учитывает и посадка
+        // в кадр (см. distanceToFit) — иначе она считала бы кадр, которого не будет.
+        double[] aim = {center[0], center[1] + radius * AIM_LIFT, center[2]};
         float[] angles = CameraFraming.lookAt(position, aim);
         return new Placement(
                 new CameraShot(tick, position[0], position[1], position[2], angles[0], angles[1], false),
                 azimuth, elevation, distance);
+    }
+
+    /**
+     * Азимуты-кандидаты для перебора: весь круг всегда (видимость должна иметь право выбрать
+     * любую сторону, откуда столб не мешает), плюс — если есть якоря — россыпь точек с более
+     * мелким шагом вокруг них, чтобы направление на фронт постройки могло победить точно, а
+     * не с точностью до пятнадцати градусов обычной сетки.
+     */
+    private static List<Double> azimuthCandidates(List<Double> anchors) {
+        List<Double> result = new ArrayList<>(AZIMUTH_STEPS);
+        for (int a = 0; a < AZIMUTH_STEPS; a++) {
+            result.add(a * 360.0 / AZIMUTH_STEPS);
+        }
+        if (anchors == null || anchors.isEmpty()) {
+            return result;
+        }
+        for (double anchor : anchors) {
+            for (int i = 0; i < ANCHOR_SAMPLES; i++) {
+                double offset = -ANCHOR_WINDOW / 2 + i * ANCHOR_WINDOW / (ANCHOR_SAMPLES - 1);
+                result.add(((anchor + offset) % 360 + 360) % 360);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Насколько ракурс близок к якорному направлению (перпендикуляру к фронту постройки).
+     * Максимум прямо на якоре, линейно падает до нуля за {@link #FACING_FALLOFF} градусов —
+     * дальше уже всё равно, какая разница, спорить тут не с чем.
+     */
+    private static double facingScore(double azimuth, List<Double> anchors) {
+        if (anchors == null || anchors.isEmpty()) {
+            return 0;
+        }
+        double best = 0;
+        for (double anchor : anchors) {
+            double turn = Math.abs(shortestTurn(azimuth - anchor));
+            best = Math.max(best, Math.max(0, 1.0 - turn / FACING_FALLOFF));
+        }
+        return best;
     }
 
     /**
@@ -516,6 +736,53 @@ public final class ShotPlanner {
             max = Math.max(max, Math.sqrt(dx * dx + dy * dy + dz * dz));
         }
         return max;
+    }
+
+    /**
+     * Доля блоков в кадре с точки на луче вокруг их центра — для грубой разведки сцен
+     * ({@link ScenePlanner}): тот же вопрос «влезает ли это в кадр целиком», которым потом
+     * задаётся настоящий поиск, только без перебора.
+     */
+    public static double framedShare(Collection<Pos> blocks, double azimuth, double elevation,
+                                     double distance, double fovDegrees, double aspect,
+                                     double safeZone) {
+        double[] center = centerOf(blocks);
+        double radius = radiusOf(blocks, center);
+        return framedFraction(pointsOf(sample(blocks)), center, radius * AIM_LIFT, distance,
+                azimuth, elevation, fovDegrees, aspect, safeZone);
+    }
+
+    /**
+     * Какая доля снимаемого попадает в безопасную зону кадра из этой точки.
+     *
+     * <p>Считается ровно той же проекцией, какой блок увидит зритель, — с соотношением сторон
+     * итогового видео и с тем же подъёмом прицела по правилу третей, что и в {@link #place}.
+     */
+    private static double framedFraction(List<double[]> points, double[] center, double aimOffsetY,
+                                         double distance, double azimuth, double elevation,
+                                         double fovDegrees, double aspect, double safeZone) {
+        if (points.isEmpty()) {
+            return 1;
+        }
+        double[] camera = CameraFraming.positionAround(center, distance, azimuth, elevation);
+        double[] lookAt = {center[0], center[1] + aimOffsetY, center[2]};
+        int inside = 0;
+        for (double[] point : points) {
+            double[] screen = CameraFraming.project(camera, lookAt, point, fovDegrees, aspect);
+            if (screen != null && Math.abs(screen[0]) <= safeZone && Math.abs(screen[1]) <= safeZone) {
+                inside++;
+            }
+        }
+        return (double) inside / points.size();
+    }
+
+    /** Центры блоков как точки — то, что проверяет посадку в кадр. */
+    private static List<double[]> pointsOf(Collection<Pos> blocks) {
+        List<double[]> points = new ArrayList<>(blocks.size());
+        for (Pos pos : blocks) {
+            points.add(new double[]{pos.x() + 0.5, pos.y() + 0.5, pos.z() + 0.5});
+        }
+        return points;
     }
 
     private static List<Pos> sample(Collection<Pos> blocks) {

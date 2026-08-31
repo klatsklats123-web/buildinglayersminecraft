@@ -80,6 +80,10 @@ public final class EditorState {
         this.fileName = fileName;
         this.activeLayer = schematic.layerCount() > 0 ? schematic.layerAt(0) : null;
         this.boxCorner = null;
+        // Разметку включаем так же, как у новой схемы. Без этого открытая схема не
+        // редактировалась: close() гасит разметку, и после «закрыть → открыть» она
+        // оставалась выключенной — схема видна, а кликом по блокам ничего не сделать.
+        this.markupEnabled = true;
     }
 
     public void close() {
@@ -130,6 +134,10 @@ public final class EditorState {
             return null;
         }
         BuildLayer layer = schematic.addLayer(name);
+        // Новый слой берёт задержки из общих настроек: выставлять их руками в каждом слое
+        // утомительно, а привычка у автора обычно одна на все схемы.
+        layer.setStartDelayTicks(ModSettings.get().defaultStartDelayTicks());
+        layer.setEndDelayTicks(ModSettings.get().defaultEndDelayTicks());
         this.activeLayer = layer;
         this.boxCorner = null;
         return layer;

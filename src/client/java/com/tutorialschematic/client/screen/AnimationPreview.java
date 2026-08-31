@@ -180,6 +180,12 @@ public final class AnimationPreview {
     /**
      * Блок под курсором — ближний к камере из тех, на чей квадрат попал курсор.
      * Перебор идёт с конца, потому что список отсортирован от дальних к ближним.
+     *
+     * <p>Если точного попадания нет, берётся ближайший по центру в пределах клетки. Без этого
+     * запаса клик часто уходил в пустоту: квадратики рисуются целым числом пикселей
+     * ({@link #blockSize()} округляет), а расстояние между соседними блоками на экране дробное,
+     * поэтому при многих значениях приближения между квадратами остаются щели в доли пикселя.
+     * Попасть в такую щель легко, и выглядело это как «точка старта ставится через раз».
      */
     @org.jetbrains.annotations.Nullable
     public BlockPos blockAt(double mouseX, double mouseY) {
@@ -192,7 +198,31 @@ public final class AnimationPreview {
                 return new BlockPos(pos.x(), pos.y(), pos.z());
             }
         }
-        return null;
+
+        // Точного попадания не было — ищем ближайший центр. Из нескольких подходящих берём
+        // ближний к камере: именно его игрок и видит сверху, остальные под ним.
+        double reach = Math.max(size, 5);
+        Projected best = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (Projected block : projected) {
+            double dx = mouseX - (block.sx() + size / 2.0);
+            double dy = mouseY - (block.sy() + size / 2.0);
+            double distance = Math.hypot(dx, dy);
+            if (distance > reach) {
+                continue;
+            }
+            // список отсортирован от дальних к ближним, поэтому при равной близости
+            // последний подходящий и есть самый ближний к камере
+            if (distance <= bestDistance) {
+                bestDistance = distance;
+                best = block;
+            }
+        }
+        if (best == null) {
+            return null;
+        }
+        Pos pos = best.pos();
+        return new BlockPos(pos.x(), pos.y(), pos.z());
     }
 
     /**

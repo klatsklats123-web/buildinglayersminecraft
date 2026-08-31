@@ -1,0 +1,139 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  display: flex;
+  height: 100vh;
+  font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+  background: #14161a;
+  color: #d8dce2;
+  overflow: hidden;
+}
+
+h1 { font-size: 15px; margin-bottom: 10px; color: #fff; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #8b93a0; margin-bottom: 6px; }
+
+#sidebar {
+  width: 320px;
+  min-width: 320px;
+  padding: 14px;
+  overflow-y: auto;
+  background: #1b1e24;
+  border-right: 1px solid #2a2e36;
+}
+#sidebar section { margin-bottom: 16px; }
+
+label { display: block; margin: 4px 0; color: #b8bec8; }
+label.row { display: flex; align-items: center; gap: 6px; }
+input[type=number], select, input[type=text] {
+  width: 100%;
+  margin-top: 2px;
+  padding: 4px 6px;
+  background: #262a32;
+  color: #e6e9ee;
+  border: 1px solid #363b45;
+  border-radius: 4px;
+}
+label.row input { width: auto; margin: 0; }
+
+button {
+  padding: 6px 12px;
+  background: #2f6fdb;
+  color: #fff;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  font: inherit;
+}
+button:hover { background: #3d7ce6; }
+button:disabled { background: #3a3f49; cursor: wait; }
+#plan { width: 100%; padding: 8px; font-weight: 600; }
+
+.hint { color: #79808c; font-size: 12px; margin-top: 4px; }
+
+/* дорожки */
+#tracks label.row { padding: 1px 0; }
+.swatch {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* слои */
+.layer { border: 1px solid #2a2e36; border-radius: 6px; margin-bottom: 6px; }
+.layer-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.layer-head .count { margin-left: auto; color: #79808c; font-size: 12px; }
+.layer-body { padding: 6px 8px 8px; border-top: 1px solid #2a2e36; display: none; }
+.layer.open .layer-body { display: block; }
+.key-row { display: flex; gap: 4px; align-items: center; margin: 3px 0; }
+.key-row input[type=text] { flex: 1; font-family: Consolas, monospace; }
+.key-row button { padding: 2px 7px; background: #3a3f49; }
+.mini { display: flex; gap: 8px; }
+.mini label { flex: 1; }
+
+/* метрики */
+#metrics { width: 100%; border-collapse: collapse; font-size: 12px; }
+#metrics td { padding: 3px 4px; border-bottom: 1px solid #262a32; }
+#metrics td.num { text-align: right; font-variant-numeric: tabular-nums; }
+#metrics td.bad { color: #e07070; }
+#metrics td.good { color: #79c98a; }
+
+/* основная область */
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#topbar {
+  display: flex; align-items: center; gap: 14px;
+  padding: 8px 12px;
+  background: #1b1e24;
+  border-bottom: 1px solid #2a2e36;
+}
+#topbar label { display: flex; align-items: center; gap: 6px; margin: 0; }
+#topbar select { width: auto; }
+.group { display: flex; }
+.toggle { background: #262a32; border-radius: 0; }
+.toggle:first-child { border-radius: 5px 0 0 5px; }
+.toggle:last-child { border-radius: 0 5px 5px 0; }
+.toggle.active { background: #2f6fdb; }
+
+#viewport { position: relative; flex: 1; min-height: 0; }
+#canvas { width: 100%; height: 100%; display: block; }
+.letterbox {
+  position: absolute; top: 0; bottom: 0;
+  background: rgba(0,0,0,.72);
+  display: none;
+  pointer-events: none;
+}
+#safezone {
+  position: absolute;
+  border: 1px dashed rgba(255,255,255,.45);
+  display: none;
+  pointer-events: none;
+}
+
+/* таймлайн */
+#timeline {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  background: #1b1e24;
+  border-top: 1px solid #2a2e36;
+}
+#timeline select { width: auto; }
+#strip-wrap { flex: 1; }
+#scrub { width: 100%; margin: 2px 0; }
+#scene-strip, #layer-strip {
+  position: relative;
+  height: 8px;
+  border-radius: 3px;
+  background: #262a32;
+  overflow: hidden;
+}
+.strip-seg { position: absolute; top: 0; bottom: 0; }
+.strip-seg.interior {
+  background-image: repeating-linear-gradient(45deg,
+    rgba(255,255,255,.5) 0 3px, transparent 3px 6px);
+}
+#tick-label { min-width: 90px; text-align: right; font-variant-numeric: tabular-nums; color: #8b93a0; }

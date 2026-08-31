@@ -280,8 +280,8 @@ public final class EditorCommands {
                                 .then(ClientCommands.argument("ticks", IntegerArgumentType.integer(0, 1200))
                                         .executes(ctx -> withLayer(ctx.getArgument("id", Integer.class), layer -> {
                                             int ticks = IntegerArgumentType.getInteger(ctx, "ticks");
-                                            layer.setPauseAfterTicks(ticks);
-                                            EditorState.info("Пауза после слоя: " + ticks + " тиков ("
+                                            layer.setEndDelayTicks(ticks);
+                                            EditorState.info("Задержка после слоя: " + ticks + " тиков ("
                                                     + String.format("%.1f", ticks / 20.0) + " с)");
                                         })))))
                 .then(animationCommand());

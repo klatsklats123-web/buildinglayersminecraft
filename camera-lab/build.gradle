@@ -1,0 +1,46 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'com.google.code.gson:gson:2.10.1'
+}
+
+// Без toolchain намеренно: собираем тем JDK, которым запущен Gradle (у мода это тот же
+// самый), а совместимость фиксируем через release. Toolchain на 21 требовал бы отдельно
+// установленный JDK ровно этой версии, которого на машине может не быть.
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+    options.encoding = 'UTF-8'
+}
+
+// Ядро камер берётся исходниками прямо из мода, а не копируется: любая правка алгоритма
+// сразу видна в лаборатории, и наоборот — нельзя «починить» что-то в лаборатории и забыть
+// про мод. Пакеты camera/order/formula не зависят от Minecraft, поэтому компилируются здесь
+// как обычный Java-код. Пакет schematic сюда не берётся: он завязан на BlockPos, и вместо
+// него у лаборатории свой лёгкий загрузчик .ltutorial (LabSchematic).
+sourceSets {
+    main {
+        java {
+            srcDirs = ['src/main/java', '../src/main/java']
+            include 'com/tutorialschematic/lab/**'
+            include 'com/tutorialschematic/camera/**'
+            include 'com/tutorialschematic/order/**'
+            include 'com/tutorialschematic/formula/**'
+        }
+    }
+}
+
+application {
+    mainClass = 'com.tutorialschematic.lab.CameraLab'
+}
+
+tasks.named('run') {
+    // Схемы лежат в профиле игры; путь можно переопределить: gradlew run --args="путь.ltutorial"
+    ignoreExitValue = true
+}

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Камерная лаборатория</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="sidebar">
+  <h1>Камерная лаборатория</h1>
+
+  <section>
+    <label>Схема
+      <select id="schematic"></select>
+    </label>
+    <div id="schematic-info" class="hint"></div>
+  </section>
+
+  <section>
+    <h2>Съёмка</h2>
+    <label>FOV <input id="fov" type="number" value="70" min="30" max="110" step="1"></label>
+    <label>Кадр
+      <select id="aspect">
+        <option value="0.5625" selected>9:16 — шортс</option>
+        <option value="1.7778">16:9 — горизонталь</option>
+        <option value="1">1:1</option>
+      </select>
+    </label>
+    <label class="row"><input id="envelope" type="checkbox" checked> Огибающая (оператор снаружи)</label>
+  </section>
+
+  <section>
+    <h2>Дорожки</h2>
+    <div id="tracks"></div>
+  </section>
+
+  <section>
+    <h2>Анимация по слоям</h2>
+    <div id="layers"></div>
+  </section>
+
+  <button id="plan">Рассчитать</button>
+  <div id="status" class="hint"></div>
+
+  <section>
+    <h2>Метрики</h2>
+    <div class="hint">в момент установки каждого блока</div>
+    <table id="metrics"><tbody></tbody></table>
+    <label class="row"><input id="highlight" type="checkbox"> Подсветить заслонённые блоки</label>
+  </section>
+</div>
+
+<div id="main">
+  <div id="topbar">
+    <div class="group">
+      <button id="view-orbit" class="toggle active">Орбита</button>
+      <button id="view-camera" class="toggle">Через камеру</button>
+    </div>
+    <label>Активная дорожка <select id="active-track"></select></label>
+    <span id="shot-info" class="hint"></span>
+  </div>
+  <div id="viewport">
+    <canvas id="canvas"></canvas>
+    <div id="letterbox-left" class="letterbox"></div>
+    <div id="letterbox-right" class="letterbox"></div>
+    <div id="safezone"></div>
+  </div>
+  <div id="timeline">
+    <button id="play">▶</button>
+    <select id="speed">
+      <option value="0.5">×0.5</option>
+      <option value="1" selected>×1</option>
+      <option value="2">×2</option>
+      <option value="4">×4</option>
+      <option value="8">×8</option>
+    </select>
+    <div id="strip-wrap">
+      <div id="scene-strip"></div>
+      <input id="scrub" type="range" min="0" max="100" value="0" step="1">
+      <div id="layer-strip"></div>
+    </div>
+    <span id="tick-label">0</span>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

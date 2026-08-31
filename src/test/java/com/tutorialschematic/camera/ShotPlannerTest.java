@@ -387,6 +387,51 @@ class ShotPlannerTest {
     }
 
     @Test
+    void сОгибающейКамераНеЗаходитВнутрьДома() {
+        // Главная жалоба всей истории: центроид кольца стен внутри дома, и камера на сфере
+        // вокруг него вставала посреди комнаты. С огибающей кандидатов внутри не существует.
+        List<Pos> target = wallRing(12, 3);
+        BuildEnvelope envelope = BuildEnvelope.around(target);
+        List<ShotPlanner.VisibilityCheck> checks =
+                List.of(new ShotPlanner.VisibilityCheck(target, Set.of()));
+
+        for (ShotStyle style : List.of(ShotStyle.NEAR_HOLD, ShotStyle.MID_HOLD, ShotStyle.NEAR_FOLLOW)) {
+            ShotPlanner.Placement placement = ShotPlanner.plan(target, checks, style, 70, 0,
+                    Double.NaN, List.of(), List.of(), 9.0 / 16.0, envelope);
+            double[] camera = {placement.shot().x(), placement.shot().y(), placement.shot().z()};
+            assertTrue(!envelope.contains(camera),
+                    style.displayName() + ": камера внутри габарита — " + camera[0] + ", "
+                            + camera[1] + ", " + camera[2]);
+        }
+    }
+
+    @Test
+    void сОгибающейВедущиеКадрыТожеОстаютсяСнаружи() {
+        // Стартовый ракурс снаружи ещё не значит снаружи всю сцену: у ведущей доктрины
+        // дистанция пересчитывается на каждый кадр, и прицел едет по периметру.
+        List<Pos> target = wallRing(12, 3);
+        BuildEnvelope envelope = BuildEnvelope.around(target);
+        List<ShotPlanner.VisibilityCheck> checks =
+                List.of(new ShotPlanner.VisibilityCheck(target, Set.of()));
+
+        List<List<Pos>> steps = new ArrayList<>();
+        for (Pos pos : target) {
+            steps.add(List.of(pos));
+        }
+        List<BuildTimeline.FrontSample> front = BuildTimeline.sample(steps, 0, 600);
+
+        ShotPlanner.Placement start = ShotPlanner.plan(target, checks, ShotStyle.NEAR_FOLLOW,
+                70, 0, Double.NaN, List.of(), List.of(), 9.0 / 16.0, envelope);
+        List<CameraShot> shots = ShotPlanner.followShots(target, start, ShotStyle.NEAR_FOLLOW,
+                front, 600, Set.of(), envelope);
+
+        for (CameraShot shot : shots) {
+            assertTrue(!envelope.contains(new double[]{shot.x(), shot.y(), shot.z()}),
+                    "кадр на тике " + shot.tick() + " внутри дома");
+        }
+    }
+
+    @Test
     void дорожкиОднойГруппыРасходятсяПоСторонам() {
         // Настоящая жалоба с практики: статичных планов пять, а ракурс у всех один —
         // отличались только дальностью. Правила композиции у них общие, значит без

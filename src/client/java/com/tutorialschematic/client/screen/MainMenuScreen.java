@@ -51,6 +51,9 @@ public class MainMenuScreen extends Screen {
 
     private int scroll;
     private int pendingDeleteLayer = -1;
+    /** Строка, которую сейчас тянут мышью; -1 — не тянут. */
+    private int draggingLayerFrom = -1;
+    private boolean layersReordered;
     /** Первое нажатие «Очистить слой» только предупреждает, второе — очищает. */
     private boolean pendingClearLayer;
 
@@ -127,6 +130,17 @@ public class MainMenuScreen extends Screen {
                 .bounds(x + halfWidth + 4, y, halfWidth, 18).build();
         close.active = has;
         addRenderableWidget(close);
+
+        y += 22;
+        Button materials = Button.builder(Component.literal("Материалы"),
+                        b -> minecraft.setScreenAndShow(new MaterialsScreen(this)))
+                .bounds(x, y, halfWidth, 18).build();
+        materials.active = has;
+        addRenderableWidget(materials);
+
+        addRenderableWidget(Button.builder(Component.literal("Настройки"),
+                        b -> minecraft.setScreenAndShow(new SettingsScreen(this)))
+                .bounds(x + halfWidth + 4, y, halfWidth, 18).build());
 
         // --- Разметка ---
         y += 34;
@@ -564,9 +578,42 @@ public class MainMenuScreen extends Screen {
             promptRenameLayer(layer);
         } else {
             EditorState.get().setActiveLayer(layer);
+            // Тот же клик начинает перетаскивание: порядок слоёв — это порядок постройки,
+            // и таскать их мышью удобнее, чем щёлкать стрелками по одному шагу.
+            draggingLayerFrom = index;
             rebuildWidgets();
         }
         return true;
+    }
+
+    @Override
+    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+        if (draggingLayerFrom >= 0) {
+            TutorialSchematic schematic = EditorState.get().schematic();
+            if (schematic == null) {
+                return true;
+            }
+            int target = (int) ((event.y() - listTop + scroll) / ROW_HEIGHT);
+            target = Math.max(0, Math.min(schematic.layerCount() - 1, target));
+            if (target != draggingLayerFrom && schematic.moveLayer(draggingLayerFrom, target)) {
+                draggingLayerFrom = target;
+                layersReordered = true;
+            }
+            return true;
+        }
+        return super.mouseDragged(event, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        draggingLayerFrom = -1;
+        if (layersReordered) {
+            // Пересобираем один раз в конце: делать это на каждый шаг мыши значит
+            // пересоздавать кнопки прямо посреди перетаскивания.
+            layersReordered = false;
+            rebuildWidgets();
+        }
+        return super.mouseReleased(event);
     }
 
     private void handleRowIcon(TutorialSchematic schematic, BuildLayer layer, int index, int icon, boolean doubleClick) {

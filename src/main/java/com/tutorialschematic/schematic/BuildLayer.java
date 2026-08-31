@@ -49,8 +49,16 @@ public class BuildLayer {
     private final List<BlockPos> seeds = new ArrayList<>();
     private OrderConfig order = OrderPresets.defaultConfig();
 
-    /** Пауза после завершения слоя в тиках — даёт время на смену ракурса при съёмке. */
-    private int pauseAfterTicks = 20;
+    /**
+     * Задержки до первого и после последнего блока слоя, в тиках.
+     *
+     * <p>Раньше пауза была одна, «после слоя», и по умолчанию равнялась двадцати тикам. На
+     * записи это выходило боком: метка следующего слоя ставилась до паузы, и камера
+     * переключалась за секунду до того, как в новом слое появлялся хоть один блок. Теперь
+     * задержек две и они явные — паузу игрок ставит сам там, где она нужна.
+     */
+    private int startDelayTicks;
+    private int endDelayTicks;
     /** Показывать ли слой в мире. Служебное состояние редактора, в файл не пишется. */
     private boolean visible = true;
 
@@ -93,13 +101,26 @@ public class BuildLayer {
         invalidateOrder();
     }
 
-    public int pauseAfterTicks() {
-        return pauseAfterTicks;
+    public int startDelayTicks() {
+        return startDelayTicks;
     }
 
-    public void setPauseAfterTicks(int ticks) {
-        this.pauseAfterTicks = Math.max(0, Math.min(20 * 60, ticks));
+    public void setStartDelayTicks(int ticks) {
+        this.startDelayTicks = clampDelay(ticks);
     }
+
+    public int endDelayTicks() {
+        return endDelayTicks;
+    }
+
+    public void setEndDelayTicks(int ticks) {
+        this.endDelayTicks = clampDelay(ticks);
+    }
+
+    private static int clampDelay(int ticks) {
+        return Math.max(0, Math.min(20 * 60, ticks));
+    }
+
 
     public boolean visible() {
         return visible;
@@ -309,7 +330,8 @@ public class BuildLayer {
 
     /** Примерная длительность слоя в секундах при текущих настройках скорости. */
     public double estimatedSeconds() {
-        return stepCount() * Math.max(1, order.ticksPerStep()) / 20.0 + pauseAfterTicks / 20.0;
+        return stepCount() * Math.max(1, order.ticksPerStep()) / 20.0
+                + (startDelayTicks + endDelayTicks) / 20.0;
     }
 
     // ---- границы ----

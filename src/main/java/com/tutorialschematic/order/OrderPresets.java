@@ -18,8 +18,13 @@ public final class OrderPresets {
      * @param formulas   формулы уровней сортировки, от главного к второстепенным
      * @param descending для каждого уровня: сортировать в обратную сторону
      * @param batchSize  сколько блоков за шаг выглядит лучше всего для этой анимации
+     * @param frontStep  ставить за шаг всё, у чего ключ совпал, а не {@code batchSize} блоков.
+     *                   Для анимаций плоскостями это обязательно: лист — это и есть все блоки
+     *                   с одной и той же высотой (или одной координатой), и класть их надо
+     *                   разом, иначе лист выкладывается по кирпичику и плоскости не видно
      */
-    public record Preset(String name, String hint, String[] formulas, boolean[] descending, int batchSize) {
+    public record Preset(String name, String hint, String[] formulas, boolean[] descending,
+                         int batchSize, boolean frontStep) {
 
         public OrderConfig toConfig() {
             OrderConfig config = new OrderConfig();
@@ -37,6 +42,7 @@ public final class OrderPresets {
                 config.keys().add(new SortKey("y"));
             }
             config.setBatchSize(batchSize);
+            config.setFrontStep(frontStep);
         }
     }
 
@@ -46,7 +52,12 @@ public final class OrderPresets {
     }
 
     private static void add(String name, String hint, String[] formulas, boolean[] descending, int batch) {
-        PRESETS.add(new Preset(name, hint, formulas, descending, batch));
+        PRESETS.add(new Preset(name, hint, formulas, descending, batch, false));
+    }
+
+    /** Анимация плоскостями: за шаг встаёт весь лист сразу, а не заданное число блоков. */
+    private static void addSheets(String name, String hint, String[] formulas, boolean[] descending) {
+        PRESETS.add(new Preset(name, hint, formulas, descending, 1, true));
     }
 
     static {
@@ -57,6 +68,33 @@ public final class OrderPresets {
         add("Сверху вниз",
                 "Та же высота, но в обратную сторону — галочка «наоборот» на уровне.",
                 new String[]{"y"}, new boolean[]{true}, 1);
+
+        // --- Плоскостями. Ключ здесь — одна координата, а шаг по фронту кладёт за раз всё,
+        // у чего она совпала: получается ровный лист целиком, а не выкладывание по кирпичику.
+
+        addSheets("Листами снизу вверх",
+                "Плоскость за плоскостью по высоте: весь этаж встаёт разом, потом следующий.",
+                new String[]{"y"}, new boolean[]{false});
+
+        addSheets("Листами сверху вниз",
+                "То же самое, но от крыши к фундаменту.",
+                new String[]{"y"}, new boolean[]{true});
+
+        addSheets("Листами по X",
+                "Вертикальные плоскости идут вдоль оси X — постройка нарастает вбок, как из ломтиков.",
+                new String[]{"x"}, new boolean[]{false});
+
+        addSheets("Листами по X наоборот",
+                "Те же вертикальные плоскости, но с противоположной стороны.",
+                new String[]{"x"}, new boolean[]{true});
+
+        addSheets("Листами по Z",
+                "Вертикальные плоскости вдоль оси Z — то же, но поперёк.",
+                new String[]{"z"}, new boolean[]{false});
+
+        addSheets("Листами по Z наоборот",
+                "Те же плоскости по Z, с противоположной стороны.",
+                new String[]{"z"}, new boolean[]{true});
 
         add("Слоями по кругу",
                 "Сначала высота, потом угол: каждый ряд обходится по часовой стрелке.",

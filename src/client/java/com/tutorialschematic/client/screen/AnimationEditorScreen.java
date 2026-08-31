@@ -1,6 +1,7 @@
 package com.tutorialschematic.client.screen;
 
 import com.tutorialschematic.client.EditorState;
+import com.tutorialschematic.client.build.BuildRunner;
 import com.tutorialschematic.order.OrderConfig;
 import com.tutorialschematic.order.SortKey;
 import com.tutorialschematic.schematic.BuildLayer;
@@ -49,7 +50,15 @@ public class AnimationEditorScreen extends Screen {
 
     private EditBox batchBox;
     private EditBox ticksBox;
-    private EditBox pauseBox;
+    private EditBox startDelayBox;
+    private EditBox endDelayBox;
+
+    /** Подписи строки темпа. Держим одним списком: по ним же меряется ширина колонки. */
+    private static final String[] TIMING_LABELS = {
+            "Блоков за шаг:", "Тиков на шаг:", "Задержка в начале:", "Задержка в конце:"
+    };
+    private int timingLabelWidth;
+    private int timingBoxX;
 
     private int leftX, leftWidth;
     private int midX, midWidth;
@@ -58,6 +67,9 @@ public class AnimationEditorScreen extends Screen {
 
     private int layerScroll;
     private boolean draggingPreview;
+    /** Строка списка, которую сейчас тянут мышью; -1 — не тянут. */
+    private int draggingLayerFrom = -1;
+    private boolean layersReordered;
 
     public AnimationEditorScreen(BuildLayer layer) {
         this(layer, null);
@@ -179,25 +191,41 @@ public class AnimationEditorScreen extends Screen {
         }
     }
 
-    /** Строка настроек темпа: размер пачки, пауза между шагами, пауза после слоя. */
+    /** Строка настроек темпа: размер пачки, тик на шаг, задержки в начале и в конце слоя. */
     private void buildTimingRow() {
         if (layer == null) {
             return;
         }
         OrderConfig order = layer.order();
-        int rowY = contentY + contentHeight - 78;
+        // Полей стало четыре вместо трёх — строка начинается выше, иначе нижнее уходит
+        // под кнопки.
+        int rowY = contentY + contentHeight - 102;
         int boxWidth = 42;
 
-        batchBox = numberBox(midX + 76, rowY, boxWidth, order.batchSize(), value -> {
+        // Колонку под подписи меряем шрифтом, а не подбираем на глаз: подписи тут разной
+        // длины, и от постоянного отступа самая длинная налезала на поле ввода.
+        timingLabelWidth = 0;
+        for (String label : TIMING_LABELS) {
+            timingLabelWidth = Math.max(timingLabelWidth, font.width(label));
+        }
+        timingBoxX = midX + 6 + timingLabelWidth + 8;
+
+        batchBox = numberBox(timingBoxX, rowY, boxWidth, order.batchSize(), value -> {
             order.setBatchSize(value);
             layer.invalidateOrder();
             preview.refresh();
         });
-        ticksBox = numberBox(midX + 76, rowY + 24, boxWidth, order.ticksPerStep(), value -> {
+        ticksBox = numberBox(timingBoxX, rowY + 24, boxWidth, order.ticksPerStep(), value -> {
             order.setTicksPerStep(value);
             preview.refresh();
         });
-        pauseBox = numberBox(midX + 76, rowY + 48, boxWidth, layer.pauseAfterTicks(), layer::setPauseAfterTicks);
+        // Две задержки вместо прежней одной паузы: перед первым блоком слоя и после
+        // последнего. Раздельно они нужны, чтобы дать камере встать до начала кладки, а не
+        // только отдышаться после неё.
+        startDelayBox = numberBox(timingBoxX, rowY + 48, boxWidth,
+                layer.startDelayTicks(), layer::setStartDelayTicks);
+        endDelayBox = numberBox(timingBoxX, rowY + 72, boxWidth,
+                layer.endDelayTicks(), layer::setEndDelayTicks);
 
         // Кнопка рядом с размером пачки, потому что она его и отменяет: включённая
         // резка по фронту делает число блоков за шаг переменным.
@@ -340,8 +368,9 @@ public class AnimationEditorScreen extends Screen {
             return;
         }
 
+        // Внизу списка — строка с общей длительностью, и список до неё не доходит.
         int listTop = contentY + 20;
-        int listBottom = contentY + contentHeight - 4;
+        int listBottom = contentY + contentHeight - 18;
         graphics.enableScissor(leftX + 1, listTop, leftX + leftWidth - 1, listBottom);
 
         int rowY = listTop - layerScroll;
@@ -351,7 +380,11 @@ public class AnimationEditorScreen extends Screen {
             boolean hovered = mouseX >= leftX && mouseX < leftX + leftWidth
                     && mouseY >= rowY && mouseY < rowY + ROW_HEIGHT;
 
-            if (selected) {
+            if (i == draggingLayerFrom) {
+                // тянущуюся строку видно отдельно: иначе при быстром движении непонятно,
+                // какой слой ты сейчас переставляешь
+                graphics.fill(leftX + 1, rowY, leftX + leftWidth - 1, rowY + ROW_HEIGHT, 0x66C9A24A);
+            } else if (selected) {
                 graphics.fill(leftX + 1, rowY, leftX + leftWidth - 1, rowY + ROW_HEIGHT, 0x552F6FA8);
             } else if (hovered) {
                 graphics.fill(leftX + 1, rowY, leftX + leftWidth - 1, rowY + ROW_HEIGHT, 0x33FFFFFF);
@@ -359,15 +392,49 @@ public class AnimationEditorScreen extends Screen {
             // цветная метка слоя — те же цвета, что и подсветка в мире
             graphics.fill(leftX + 3, rowY + 3, leftX + 8, rowY + ROW_HEIGHT - 3, 0xFF000000 | current.color());
 
+            // Справа — не число блоков, а сколько слой будет строиться: длительность и есть
+            // то, чем меряют ролик, а блоки выбранного слоя видно под превью.
+            String time = duration(buildSeconds(current));
             String label = (i + 1) + ". " + current.name();
-            String trimmed = font.plainSubstrByWidth(label, leftWidth - 34);
+            String trimmed = font.plainSubstrByWidth(label, leftWidth - 24 - font.width(time));
             graphics.text(font, trimmed, leftX + 12, rowY + 3, selected ? TEXT : TEXT_DIM);
-            graphics.text(font, String.valueOf(current.blockCount()),
-                    leftX + leftWidth - 6 - font.width(String.valueOf(current.blockCount())), rowY + 3, TEXT_DIM);
+            graphics.text(font, time, leftX + leftWidth - 6 - font.width(time), rowY + 3, TEXT_DIM);
 
             rowY += ROW_HEIGHT;
         }
         graphics.disableScissor();
+
+        double total = 0;
+        for (int i = 0; i < schematic.layerCount(); i++) {
+            total += buildSeconds(schematic.layerAt(i));
+        }
+        graphics.fill(leftX + 1, listBottom, leftX + leftWidth - 1, listBottom + 1, PANEL_BORDER);
+        double speed = BuildRunner.get().speedMultiplier();
+        String totalLabel = duration(total);
+        String caption = speed == 1.0 ? "Всего" : String.format("Всего · x%.1f", speed);
+        graphics.text(font, caption, leftX + 6, listBottom + 5, TEXT_DIM);
+        graphics.text(font, totalLabel, leftX + leftWidth - 6 - font.width(totalLabel), listBottom + 5, TEXT);
+    }
+
+    /**
+     * Сколько слой будет строиться на самом деле.
+     *
+     * <p>Настройки слоя задают темп, а общий множитель скорости растягивает или сжимает всё
+     * разом — вместе с задержками. Без него счёт врёт во столько же раз, во сколько
+     * выкручена скорость: на записи, снятой втрое медленнее, слой на восемь секунд шёл
+     * двадцать пять. Превью считает так же.
+     */
+    private static double buildSeconds(BuildLayer layer) {
+        return layer.estimatedSeconds() / Math.max(0.1, BuildRunner.get().speedMultiplier());
+    }
+
+    /** Длительность человеческими единицами: секунды, пока их немного, дальше минуты. */
+    private static String duration(double totalSeconds) {
+        if (totalSeconds < 60) {
+            return String.format("%.1f с", totalSeconds);
+        }
+        int whole = (int) Math.round(totalSeconds);
+        return String.format("%d:%02d", whole / 60, whole % 60);
     }
 
     private void drawFormulaSection(GuiGraphicsExtractor graphics) {
@@ -399,14 +466,24 @@ public class AnimationEditorScreen extends Screen {
             return;
         }
         OrderConfig order = layer.order();
-        int rowY = contentY + contentHeight - 78;
+        int rowY = contentY + contentHeight - 102;
 
-        graphics.text(font, "Блоков за шаг:", midX + 6, rowY + 5, TEXT);
-        graphics.text(font, "Пауза, тиков:", midX + 6, rowY + 29, TEXT);
-        graphics.text(font, "Пауза после:", midX + 6, rowY + 53, TEXT);
+        for (int i = 0; i < TIMING_LABELS.length; i++) {
+            graphics.text(font, TIMING_LABELS[i], midX + 6, rowY + 5 + i * 24, TEXT);
+        }
 
-        graphics.text(font, String.format("%.1f бл/с", order.blocksPerSecond()), midX + 124, rowY + 29, TEXT_DIM);
-        graphics.text(font, String.format("%.1f с всего", layer.estimatedSeconds()), midX + 124, rowY + 5, TEXT_DIM);
+        // Справа от полей — то же число человеческими единицами. Тики понятны не сразу,
+        // а задержку игрок задумывает секундами.
+        int hintX = timingBoxX + 48;
+        graphics.text(font, String.format("%.1f с всего", buildSeconds(layer)), hintX, rowY + 5, TEXT_DIM);
+        graphics.text(font, String.format("%.1f бл/с", order.blocksPerSecond()), hintX, rowY + 29, TEXT_DIM);
+        graphics.text(font, seconds(layer.startDelayTicks()), hintX, rowY + 53, TEXT_DIM);
+        graphics.text(font, seconds(layer.endDelayTicks()), hintX, rowY + 77, TEXT_DIM);
+    }
+
+    /** Тики в секундах: в игре двадцать тиков в секунде. */
+    private static String seconds(int ticks) {
+        return String.format("= %.1f с", ticks / 20.0);
     }
 
     private void drawPreviewSection(GuiGraphicsExtractor graphics) {
@@ -451,22 +528,39 @@ public class AnimationEditorScreen extends Screen {
             return true;
         }
 
-        // выбор слоя в списке
+        // выбор слоя в списке; он же начало перетаскивания — порядок слоёв это порядок
+        // постройки, и менять его удобнее мышью, чем кнопками «выше/ниже»
         TutorialSchematic schematic = EditorState.get().schematic();
         if (schematic != null && mouseX >= leftX && mouseX < leftX + leftWidth) {
-            int listTop = contentY + 20;
-            int index = (int) ((mouseY - listTop + layerScroll) / ROW_HEIGHT);
-            if (index >= 0 && index < schematic.layerCount() && mouseY >= listTop) {
+            int index = layerRowAt(mouseY);
+            if (index >= 0 && index < schematic.layerCount()) {
                 selectLayer(schematic.layerAt(index));
+                draggingLayerFrom = index;
                 return true;
             }
         }
         return false;
     }
 
+    /** Номер строки списка слоёв под курсором, либо -1. */
+    private int layerRowAt(double mouseY) {
+        int listTop = contentY + 20;
+        if (mouseY < listTop) {
+            return -1;
+        }
+        return (int) ((mouseY - listTop + layerScroll) / ROW_HEIGHT);
+    }
+
     @Override
     public boolean mouseReleased(MouseButtonEvent event) {
         draggingPreview = false;
+        draggingLayerFrom = -1;
+        if (layersReordered) {
+            // Виджеты пересобираем один раз, когда перетаскивание закончилось: делать это на
+            // каждый шаг мыши значит пересоздавать кнопки прямо во время перетаскивания.
+            layersReordered = false;
+            rebuildWidgets();
+        }
         return super.mouseReleased(event);
     }
 
@@ -474,6 +568,20 @@ public class AnimationEditorScreen extends Screen {
     public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
         if (draggingPreview) {
             preview.rotate(dragX * 0.6, -dragY * 0.6);
+            return true;
+        }
+        if (draggingLayerFrom >= 0) {
+            TutorialSchematic schematic = EditorState.get().schematic();
+            if (schematic == null) {
+                return true;
+            }
+            // Тянем строку за курсором по одному шагу: слой переставляется сразу, поэтому
+            // видно результат, а не только рамку на месте будущей вставки.
+            int target = Math.max(0, Math.min(schematic.layerCount() - 1, layerRowAt(event.y())));
+            if (target != draggingLayerFrom && schematic.moveLayer(draggingLayerFrom, target)) {
+                draggingLayerFrom = target;
+                layersReordered = true;
+            }
             return true;
         }
         return super.mouseDragged(event, dragX, dragY);
@@ -487,7 +595,7 @@ public class AnimationEditorScreen extends Screen {
         }
         TutorialSchematic schematic = EditorState.get().schematic();
         if (schematic != null && mouseX >= leftX && mouseX < leftX + leftWidth) {
-            int visibleRows = (contentHeight - 24) / ROW_HEIGHT;
+            int visibleRows = (contentHeight - 38) / ROW_HEIGHT;
             int maxScroll = Math.max(0, schematic.layerCount() - visibleRows) * ROW_HEIGHT;
             layerScroll = (int) Math.max(0, Math.min(maxScroll, layerScroll - scrollY * ROW_HEIGHT));
             return true;

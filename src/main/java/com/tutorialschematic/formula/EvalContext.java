@@ -19,6 +19,8 @@ public final class EvalContext {
     public double cx, cy, cz;
     /** Смещение блока от центра. */
     public double dx, dy, dz;
+    /** Нулевое направление для угла {@code a}: ноль — ось +X, иначе задано точкой старта. */
+    private double angleOrigin;
     /** Расстояние от центра по горизонтали и в 3D. */
     public double r, r3;
     /** Угол вокруг вертикальной оси, 0..360 градусов. 0 — в сторону +X. */
@@ -52,6 +54,16 @@ public final class EvalContext {
      * Задаёт границы слоя. minX/minY/minZ — мировые координаты минимального угла,
      * size* — размеры в блоках (не меньше 1).
      */
+    /**
+     * Направление, которое считается нулевым для угла {@code a}, в градусах.
+     *
+     * <p>Ставится по точке старта: круговая анимация должна начинаться там, куда игрок
+     * показал, а не от оси координат.
+     */
+    public void setAngleOrigin(double degrees) {
+        this.angleOrigin = degrees;
+    }
+
     public void setBounds(int minX, int minY, int minZ, int sizeX, int sizeY, int sizeZ, int blockCount) {
         this.originX = minX;
         this.originY = minY;
@@ -84,8 +96,12 @@ public final class EvalContext {
         this.dz = bz - cz;
         this.r = Math.sqrt(dx * dx + dz * dz);
         this.r3 = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        double deg = Math.toDegrees(Math.atan2(dz, dx));
-        this.a = deg < 0 ? deg + 360.0 : deg;
+        // Угол отсчитывается от точки старта, если она задана. Без этого правая кнопка по
+        // превью влияла только на «d» — расстояние по постройке, — а круговая анимация всё
+        // равно начиналась от оси +X, куда бы игрок ни ткнул. Выглядело так, будто выбор
+        // точки старта работает через раз: на одних формулах работал, на других нет.
+        double deg = Math.toDegrees(Math.atan2(dz, dx)) - angleOrigin;
+        this.a = ((deg % 360.0) + 360.0) % 360.0;
         this.rand = hashUnit(seed, bx, by, bz);
     }
 

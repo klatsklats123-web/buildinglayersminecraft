@@ -1,9 +1,13 @@
 package com.tutorialschematic.client.flashback;
 
+import com.tutorialschematic.camera.BuildAnalyzer;
+import com.tutorialschematic.camera.BuildEnvelope;
 import com.tutorialschematic.camera.BuildTimeline;
 import com.tutorialschematic.camera.CameraFraming;
 import com.tutorialschematic.camera.CameraShot;
-import com.tutorialschematic.camera.Occlusion;
+import com.tutorialschematic.camera.LayerShots;
+import com.tutorialschematic.camera.SafetyValidator;
+import com.tutorialschematic.camera.ScenePlanner;
 import com.tutorialschematic.camera.ShotPlanner;
 import com.tutorialschematic.camera.ShotStyle;
 import com.tutorialschematic.client.EditorState;
@@ -166,51 +170,12 @@ public final class CameraExport {
         return result;
     }
 
-    /**
-     * Подстраховка при накоплении фазы: если с её примерного ракурса новое окно видно меньше
-     * этого — режем, даже если фронт по углу почти не сдвинулся. Сам по себе угол ничего не
-     * знает про заслоны от других слоёв или про форму, которая перестала быть выпуклой без
-     * явного поворота (например, фронт зашёл за угол пристройки).
-     */
-    private static final double PHASE_CONTINUITY_VISIBILITY = 0.7;
-
-    /**
-     * Главный триггер новой фазы: на сколько градусов должен сдвинуться фронт (по азимуту
-     * от центра **всей постройки**, не слоя) — «широкая» гранулярность режет редко и
-     * объединяет, «дробящая» режет часто. Не про видимость — ровно то, что показал ручной
-     * эталон: пока кладка идёт по одной стене, азимут меняется мало, стена сменилась —
-     * скачок сразу на десятки градусов.
-     */
-    private static final double WIDE_CUT_ANGLE = 65.0;
-    private static final double CLOSE_CUT_ANGLE = 30.0;
-
-    /**
-     * Меньше этого фаза не закрывается, что бы ни говорили угол, видимость или плоскостность.
-     * На реальном рендере «Ближнего · статичного» дробящая гранулярность резала на такие
-     * мелкие куски (обрезок одного столбика), что камера вставала вплотную и временами
-     * оказывалась внутри блока — снаружи в упор ставить её было уже некуда. Больше блоков
-     * в фазе — больше её радиус — есть куда отступить.
-     */
-    private static final int MIN_PHASE_BLOCKS = 8;
-
-    /**
-     * Второй, независимый от угла триггер новой фазы: насколько должна перемениться
-     * «плоскостность» ({@link ShotPlanner#flatness}) нового окна относительно уже
-     * накопленного, чтобы считать, что здесь нужен другой подъём камеры. Пол, каркас
-     * (столбы) и стены могут идти с одного и того же азимута (фронт не поворачивается),
-     * но это три разных по форме куска — на записи-эталоне ровно на этих переходах камера
-     * меняла высоту, хотя не поворачивалась.
-     */
-    private static final double FLATNESS_CUT_DELTA = 0.35;
-
     private static Map<ShotStyle, List<CameraShot>> planTracks(TutorialSchematic schematic,
                                                                List<LayerTiming> timings) {
         double fov = Minecraft.getInstance().options.fov().get();
         Map<ShotStyle, List<CameraShot>> tracks = new EnumMap<>(ShotStyle.class);
-        Map<ShotStyle, Double> lastAzimuth = new EnumMap<>(ShotStyle.class);
         for (ShotStyle style : ShotStyle.values()) {
             tracks.put(style, new ArrayList<>());
-            lastAzimuth.put(style, Double.NaN);
         }
 
         // Общий план ставится один раз на всю запись и кадрируется по всей постройке
@@ -219,7 +184,6 @@ public final class CameraExport {
         for (LayerTiming timing : timings) {
             everything.addAll(positionsOf(timing.layer()));
         }
-        double[] buildCenter = ShotPlanner.centerOf(everything);
 
         // Два разных множества заслонов, и смешивать их нельзя. built — только блоки уже
         // построенных слоёв: это то, из-за чего поиск ракурса имеет право решить «отсюда не
@@ -232,183 +196,157 @@ public final class CameraExport {
         Set<Pos> built = new HashSet<>();
         Set<Pos> solid = new HashSet<>(worldOccluders(schematic, new HashSet<>(everything)));
 
+        // Габарит всей будущей постройки — граница «снаружи, как оператор». Считается один
+        // раз по всей схеме: оператор с первого слоя держится за линией застройки, а не
+        // переезжает, когда стены дорастут до его точки. Внутрь габарита камера имеет право
+        // зайти только ради интерьера, которого снаружи не видно вовсе (см. ниже).
+        BuildEnvelope envelope = everything.isEmpty() ? null : BuildEnvelope.around(everything);
+
         for (ShotStyle style : ShotStyle.values()) {
             if (style.wholeBuild() && !everything.isEmpty()) {
-                tracks.get(style).add(ShotPlanner.plan(everything, built, style, fov,
-                        timings.get(0).startTick(), Double.NaN).shot());
+                tracks.get(style).add(ShotPlanner.plan(everything,
+                        List.of(new ShotPlanner.VisibilityCheck(everything, built)), style, fov,
+                        timings.get(0).startTick(), Double.NaN, List.of(), List.of(),
+                        TARGET_ASPECT, envelope).shot());
             }
         }
-
-        // Единый таймлайн окон по всей записи, а не по одному слою за раз. Граница слоя
-        // сама по себе ракурс больше не меняет — раньше конец каждого слоя безусловно резал
-        // дорожку на новый кадр, даже если следующий слой прекрасно снимался бы с того же
-        // ракурса без единого реза. Решает только реальный сдвиг фронта.
-        List<BuildTimeline.Window> allWindows = new ArrayList<>();
+        // Дальше — покадровая съёмка по слоям. Слой это фигура: пол и потолок — лист,
+        // стены — кольцо. Кольцо, которое кладут стороной за стороной, распадается на эти
+        // стороны, и каждую снимают снаружи напротив неё. Разбор общий для всех дорожек:
+        // снимают они одно и то же, отличаясь только крупностью и наклоном.
+        List<LayerShots.Unit> units = new ArrayList<>();
+        int globalStep = 0;
+        // Стороны слоя ищутся по силуэту всей постройки, а не одного слоя: стена, у которой
+        // под ней уже стоит столб, — часть той же грани, что и столб, и уезжать с неё рано.
+        List<Pos> done = new ArrayList<>();
         for (LayerTiming timing : timings) {
-            allWindows.addAll(BuildTimeline.windows(timing.layer().steps(), timing.startTick(), timing.endTick()));
-        }
+            List<List<Pos>> steps = timing.layer().steps();
+            BuildLayer layer = timing.layer();
 
-        Map<ShotStyle, PhaseAccumulator> phases = new EnumMap<>(ShotStyle.class);
-        for (ShotStyle style : ShotStyle.values()) {
-            if (style.wholeBuild() || !style.exported()) {
-                continue;
+            // Куски раскладываются по времени, когда слой действительно строится, а не по
+            // всему промежутку между метками: задержки в начале и в конце — мёртвое время,
+            // и если размазать куски по нему, каждая смена ракурса уезжает на полсекунды.
+            int buildStart = timing.startTick() + layer.startDelayTicks();
+            int buildEnd = Math.max(buildStart + 1, timing.endTick() - layer.endDelayTicks());
+            List<LayerShots.Unit> layerUnits =
+                    LayerShots.split(steps, buildStart, buildEnd, globalStep, done);
+
+            // А вот первый кадр слоя должен стоять уже на метке — задержка в начале для того
+            // и нужна, чтобы камера успела встать до первого блока.
+            if (!layerUnits.isEmpty()) {
+                LayerShots.Unit first = layerUnits.get(0);
+                layerUnits.set(0, new LayerShots.Unit(first.blocks(), first.steps(), first.form(),
+                        first.facing(), timing.startTick(), first.endTick(), first.firstGlobalStep()));
             }
-            phases.put(style, new PhaseAccumulator());
-        }
-
-        for (BuildTimeline.Window window : allWindows) {
-            List<Pos> blocks = window.blocks();
-            double windowAzimuth = frontAzimuth(ShotPlanner.centerOf(blocks), buildCenter);
-
-            for (Map.Entry<ShotStyle, PhaseAccumulator> entry : phases.entrySet()) {
-                ShotStyle style = entry.getKey();
-                PhaseAccumulator phase = entry.getValue();
-                double cutAngle = style.granularity() == ShotStyle.Granularity.PREFER_WHOLE
-                        ? WIDE_CUT_ANGLE : CLOSE_CUT_ANGLE;
-
-                boolean startNew;
-                boolean hardCut;
-                if (phase.isEmpty()) {
-                    startNew = true;
-                    hardCut = true;
-                } else {
-                    double turn = Math.abs(ShotPlanner.shortestTurn(windowAzimuth - phase.referenceAzimuth));
-                    if (turn >= cutAngle) {
-                        startNew = true;
-                        hardCut = true;
-                    } else {
-                        // Примерная камера для подстраховки: настоящий ракурс фазы ещё не
-                        // посчитан (он ищется только когда фаза закрывается), но грубая оценка
-                        // по накопленным блокам и типовой высоте дорожки достаточно точна,
-                        // чтобы поймать «а тут вдруг что-то заслонило».
-                        List<Pos> prospective = new ArrayList<>(phase.blocksSoFar);
-                        prospective.addAll(blocks);
-                        double[] prospectiveCenter = ShotPlanner.centerOf(prospective);
-                        double roughRadius = ShotPlanner.radiusOf(prospective, prospectiveCenter);
-                        double roughDistance = CameraFraming.distanceFor(roughRadius, fov, style.margin());
-                        double roughElevation = (style.minElevation() + style.maxElevation()) / 2;
-                        double[] camera = CameraFraming.positionAround(prospectiveCenter, roughDistance,
-                                phase.referenceAzimuth, roughElevation);
-                        // Тут — видно ли вообще, а не «внутри ли мы», поэтому мир учитывается.
-                        if (Occlusion.visibleFraction(camera, blocks, solid) < PHASE_CONTINUITY_VISIBILITY) {
-                            startNew = true;
-                            hardCut = true;
-                        } else {
-                            // Тот же азимут, но фронт сменил форму (пол → каркас → стены) —
-                            // нужна другая высота, хотя сторона та же. У ведущей камеры это
-                            // повод плавно переехать (так и было на эталоне), у остальных —
-                            // всё равно жёсткий рез, там плавных переездов вообще нет.
-                            double delta = Math.abs(ShotPlanner.flatness(blocks)
-                                    - ShotPlanner.flatness(phase.blocksSoFar));
-                            startNew = delta >= FLATNESS_CUT_DELTA;
-                            hardCut = !style.follows();
-                        }
-                    }
-                }
-
-                // Меньше минимума — фаза ещё не набрала достаточно блоков, чтобы у нового
-                // ракурса было куда отступить. Копим дальше, что бы ни решили триггеры выше.
-                if (startNew && !phase.isEmpty() && phase.blocksSoFar.size() < MIN_PHASE_BLOCKS) {
-                    startNew = false;
-                }
-
-                if (startNew) {
-                    finishPhase(phase, style, tracks, fov, lastAzimuth, window.tick());
-                    phase.reset(windowAzimuth, window.tick(), hardCut, built, solid);
-                }
-                phase.add(window);
+            units.addAll(layerUnits);
+            globalStep += steps.size();
+            for (List<Pos> step : steps) {
+                done.addAll(step);
             }
-            built.addAll(blocks);
-            solid.addAll(blocks);
         }
 
-        int finalTick = timings.get(timings.size() - 1).endTick();
-        for (Map.Entry<ShotStyle, PhaseAccumulator> entry : phases.entrySet()) {
-            finishPhase(entry.getValue(), entry.getKey(), tracks, fov, lastAzimuth, finalTick);
+        for (LayerShots.Unit unit : units) {
+            // Заслоны берём на момент начала куска: к его концу часть блоков поставит он сам,
+            // и требовать, чтобы они не мешали, значит требовать невозможного.
+            Set<Pos> standing = Set.copyOf(built);
+            Set<Pos> obstacles = Set.copyOf(solid);
+
+            for (ShotStyle style : ShotStyle.values()) {
+                if (style.wholeBuild() || !style.exported()) {
+                    continue;
+                }
+                CameraShot shot = LayerShots.place(unit, style, fov, TARGET_ASPECT,
+                        standing, obstacles, envelope, unit.startTick());
+                if (shot == null) {
+                    continue;
+                }
+                tracks.get(style).add(shot);
+                if (style.follows()) {
+                    // Ведущая дорожка стоит на том же месте, но доводит объектив за работой:
+                    // это то, что делает оператор, и то, чего прежняя схема выразить не могла —
+                    // там камера считалась вокруг прицела и уезжала вместе с ним.
+                    tracks.get(style).addAll(followWithin(unit, shot));
+                }
+            }
+            built.addAll(unit.blocks());
+            solid.addAll(unit.blocks());
         }
 
         return tracks;
     }
 
     /**
-     * Копится, пока фронт постройки остаётся достаточно на одном месте. Ракурс фазы не
-     * известен, пока она не закрылась — {@code referenceAzimuth} нужен только для решения
-     * «резать или нет», настоящий ракурс ищет {@link #finishPhase} композиционным поиском.
+     * Кадры внутри куска для ведущей дорожки: камера не двигается, меняется только наводка.
      */
-    private static final class PhaseAccumulator {
-        double referenceAzimuth = Double.NaN;
-        int startTick;
-        /** Жёсткая склейка в начало этой фазы — false означает плавный переезд с прошлой. */
-        boolean hardCut = true;
-        /** Только блоки схемы — уходит в поиск ракурса, чтобы дерево не выглядело как «мы внутри». */
-        Set<Pos> occludersAtStart = Set.of();
-        /** Блоки схемы плюс постороннее из мира — уходит в финальную защиту от врезания. */
-        Set<Pos> solidAtStart = Set.of();
-        final List<List<Pos>> steps = new ArrayList<>();
-        final List<Pos> blocksSoFar = new ArrayList<>();
-
-        boolean isEmpty() {
-            return steps.isEmpty();
+    private static List<CameraShot> followWithin(LayerShots.Unit unit, CameraShot from) {
+        List<CameraShot> extra = new ArrayList<>();
+        List<BuildTimeline.FrontSample> front =
+                BuildTimeline.sample(unit.steps(), unit.startTick(), unit.endTick() - 1);
+        double[] camera = {from.x(), from.y(), from.z()};
+        for (BuildTimeline.FrontSample sample : front) {
+            if (sample.tick() <= from.tick()) {
+                continue;
+            }
+            float[] angles = CameraFraming.lookAt(camera, sample.center());
+            extra.add(new CameraShot(sample.tick(), camera[0], camera[1], camera[2],
+                    angles[0], angles[1], false));
         }
+        return extra;
+    }
 
-        void add(BuildTimeline.Window window) {
-            steps.addAll(window.steps());
-            blocksSoFar.addAll(window.blocks());
-        }
-
-        void reset(double azimuth, int tick, boolean hardCut, Set<Pos> built, Set<Pos> solid) {
-            referenceAzimuth = azimuth;
-            startTick = tick;
-            this.hardCut = hardCut;
-            occludersAtStart = new HashSet<>(built);
-            solidAtStart = new HashSet<>(solid);
-            steps.clear();
-            blocksSoFar.clear();
-        }
+    /** Кадры одной сцены вместе с ракурсом, из которого они получены — нужен следующей сцене. */
+    private record SceneResult(List<CameraShot> shots, ShotPlanner.Placement placement) {
     }
 
     /**
-     * Закрывает фазу: ищет ей настоящий ракурс композиционным поиском (не по фронту — тот
-     * решал только когда резать, а не куда смотреть) и раскладывает на кадры.
+     * Ищет сцене настоящий ракурс композиционным поиском и раскладывает его на кадры.
      *
-     * <p>Поиск смотрит только на блоки схемы ({@code occludersAtStart}) — то же разделение,
-     * что и у самозаслона: дерево или рельеф не должны заставлять поиск решить, что мы
-     * внутри помещения, и полезть камерой в дом. А вот финальная раскладка на кадры
-     * ({@code followShots}) уже получает {@code solidAtStart} — от дерева камере всё равно
-     * нужно физически не залезать.
+     * <p>Поиск смотрит только на блоки схемы ({@code occludersAtStart}) — дерево или рельеф
+     * не должны заставлять его решить, что мы внутри помещения, и полезть камерой в дом.
+     * А вот финальная раскладка на кадры ({@code followShots}) уже получает
+     * {@code solidAtStart} — от дерева камере всё равно нужно физически не залезать.
+     *
+     * @param direction направление фронта постройки этой сцены (или унаследованное от
+     *                  предыдущей, для столба) — {@code NaN}, если своей стороны нет
+     *                  (пол, одинокий столб без соседей): тогда поиск идёт по всему кругу
      */
-    private static void finishPhase(PhaseAccumulator phase, ShotStyle style,
-                                    Map<ShotStyle, List<CameraShot>> tracks, double fov,
-                                    Map<ShotStyle, Double> lastAzimuth, int endTick) {
-        if (phase.isEmpty()) {
-            return;
-        }
-        List<Pos> phaseTargets = phase.blocksSoFar;
-        ShotPlanner.VisibilityCheck check = new ShotPlanner.VisibilityCheck(phaseTargets, phase.occludersAtStart);
-        ShotPlanner.Placement placement = ShotPlanner.plan(phaseTargets, List.of(check), style, fov,
-                phase.startTick, lastAzimuth.get(style), List.of());
-        lastAzimuth.put(style, placement.azimuth());
+    private static SceneResult shootScene(ScenePlanner.Scene scene, double direction, ShotStyle style, double fov,
+                                          List<ShotPlanner.VisibilityCheck> checks, Set<Pos> solidAtStart,
+                                          double previousAzimuth, BuildEnvelope keepOutsideOf) {
+        List<Pos> targets = scene.blocks();
+
+        // У стены (и у кольца интерьера вдоль той же стены) есть ровно две осмысленные
+        // стороны — перпендикуляр к тому, как едет фронт кладки, в одну сторону и в другую.
+        // Снаружи или изнутри — решает не жёсткое правило, а та же проверка видимости, что
+        // и так уже есть в поиске: снаружи стены открыто — выигрывает наружная сторона,
+        // изнутри уже обнесённой комнаты открыто внутрь — выигрывает внутренняя.
+        List<Double> azimuthAnchors = Double.isNaN(direction)
+                ? List.of()
+                : List.of(norm(direction + 90), norm(direction + 270));
+
+        ShotPlanner.Placement placement = ShotPlanner.plan(targets, checks, style, fov,
+                scene.startTick(), previousAzimuth, List.of(), azimuthAnchors, TARGET_ASPECT,
+                keepOutsideOf);
 
         List<BuildTimeline.FrontSample> front = style.follows()
-                ? BuildTimeline.sample(phase.steps, phase.startTick, endTick - 1)
+                ? BuildTimeline.sample(scene.steps(), scene.startTick(), scene.endTick() - 1)
                 : List.of();
-        List<CameraShot> shots = ShotPlanner.followShots(phaseTargets, placement, style, front,
-                endTick - 1, phase.solidAtStart);
-        if (!shots.isEmpty()) {
-            shots.set(0, shots.get(0).withCut(phase.hardCut));
-            tracks.get(style).addAll(shots);
-        }
+        List<CameraShot> shots = ShotPlanner.followShots(targets, placement, style, front,
+                scene.endTick() - 1, solidAtStart, keepOutsideOf);
+        return new SceneResult(shots, placement);
     }
 
-    /** Азимут направления от центра постройки на центр окна — та же система отсчёта, что у {@link CameraFraming}. */
-    private static double frontAzimuth(double[] windowCenter, double[] buildCenter) {
-        double dx = windowCenter[0] - buildCenter[0];
-        double dz = windowCenter[2] - buildCenter[2];
-        if (Math.abs(dx) < 1.0e-6 && Math.abs(dz) < 1.0e-6) {
-            return 0;
-        }
-        double degrees = Math.toDegrees(Math.atan2(dx, dz));
-        return degrees < 0 ? degrees + 360 : degrees;
+    /**
+     * Соотношение сторон итогового видео: сейчас вертикальное, под шортсы.
+     *
+     * <p>Кадрирование от него зависит напрямую — вертикальный кадр почти вдвое уже
+     * горизонтального, и то, что спокойно помещалось в 16:9, в шортсе оказывается за краем.
+     */
+    private static final double TARGET_ASPECT = 9.0 / 16.0;
+
+
+    private static double norm(double degrees) {
+        return ((degrees % 360) + 360) % 360;
     }
 
     private static List<Pos> positionsOf(BuildLayer layer) {

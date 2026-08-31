@@ -89,6 +89,10 @@ public final class BlockOrderer {
         EvalContext ctx = new EvalContext();
         ctx.setSeed(config.seed());
         ctx.setBounds(minX, minY, minZ, maxX - minX + 1, maxY - minY + 1, maxZ - minZ + 1, n);
+        // Точка старта задаёт не только расстояние по постройке, но и начало отсчёта угла:
+        // круговая анимация должна пойти оттуда, куда показал игрок.
+        ctx.setAngleOrigin(angleOfSeed(seeds, minX, minZ,
+                (maxX - minX + 1 - 1) / 2.0, (maxZ - minZ + 1 - 1) / 2.0));
 
         double[] keys = new double[n * depth];
         for (int i = 0; i < n; i++) {
@@ -134,6 +138,27 @@ public final class BlockOrderer {
             sortedKeys[i] = java.util.Arrays.copyOfRange(keys, index * depth, index * depth + depth);
         }
         return new Ordered(result, sortedKeys);
+    }
+
+    /**
+     * Угол первой точки старта относительно центра слоя, в градусах.
+     *
+     * <p>Считается в той же системе, что и {@code a} в {@link EvalContext}: координаты
+     * относительно минимального угла слоя, центр — середина габарита. Без точек старта
+     * возвращается ноль, и угол отсчитывается от оси +X, как раньше.
+     */
+    private static double angleOfSeed(List<Pos> seeds, int minX, int minZ, double cx, double cz) {
+        if (seeds == null || seeds.isEmpty()) {
+            return 0;
+        }
+        Pos seed = seeds.get(0);
+        double dx = (seed.x() - minX) - cx;
+        double dz = (seed.z() - minZ) - cz;
+        if (Math.abs(dx) < 1.0e-9 && Math.abs(dz) < 1.0e-9) {
+            // точка старта ровно в центре: направления у неё нет, оставляем прежний отсчёт
+            return 0;
+        }
+        return Math.toDegrees(Math.atan2(dz, dx));
     }
 
     /** Ключи-заглушки для вырожденного случая: каждый блок сам себе фронт. */
