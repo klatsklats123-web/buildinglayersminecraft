@@ -11,6 +11,7 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import org.lwjgl.glfw.GLFW;
@@ -56,10 +57,14 @@ public class MaterialsScreen extends Screen {
         }
     }
 
-    private record Material(String name, int count) {
+    /** Иконка собирается один раз при сборе списка, а не каждый кадр. */
+    private record Material(ItemStack icon, String name, int count) {
     }
 
-    private static final int ROW_HEIGHT = 12;
+    /** Ровно под иконку предмета: она рисуется размером шестнадцать на шестнадцать. */
+    private static final int ICON = 16;
+
+    private static final int ROW_HEIGHT = 18;
     private static final int HEADER_HEIGHT = 34;
     private static final int PANEL_BG = 0xEE14161C;
     private static final int PANEL_BORDER = 0xFF3A3F4B;
@@ -145,7 +150,10 @@ public class MaterialsScreen extends Screen {
             }
         }
         for (Map.Entry<Block, Integer> entry : counts.entrySet()) {
-            materials.add(new Material(entry.getKey().getName().getString(), entry.getValue()));
+            // У части блоков предмета нет вовсе — вода, огонь, настенные варианты. Стопка
+            // тогда пустая, и рисуется просто ничего: строка остаётся, иконки нет.
+            materials.add(new Material(new ItemStack(entry.getKey()),
+                    entry.getKey().getName().getString(), entry.getValue()));
         }
         applySort();
     }
@@ -222,7 +230,7 @@ public class MaterialsScreen extends Screen {
     private void clampPanel() {
         // Каждой колонке нужна своя минимальная ширина, иначе на четырёх колонках от
         // названий остаются две буквы. Но шире экрана панель не растёт даже ради колонок.
-        int minWidth = Math.min(width - 8, 160 + (columns - 1) * (120 + COLUMN_GAP));
+        int minWidth = Math.min(width - 8, 180 + (columns - 1) * (140 + COLUMN_GAP));
         panelWidth = Math.max(minWidth, Math.min(width - 8, panelWidth));
         panelHeight = Math.max(90, Math.min(height - 8, panelHeight));
         panelX = Math.max(0, Math.min(width - panelWidth, panelX));
@@ -268,9 +276,14 @@ public class MaterialsScreen extends Screen {
                 graphics.fill(columnX - 2, rowY - 1, columnX + columnWidth + 2, rowY + ROW_HEIGHT - 1,
                         0x66C9A24A);
             }
-            String name = font.plainSubstrByWidth(material.name(), columnWidth - 8 - countWidth);
-            graphics.text(font, name, columnX, rowY, TEXT);
-            graphics.text(font, count, columnX + columnWidth - countWidth, rowY, ACCENT);
+            graphics.item(material.icon(), columnX, rowY);
+            // Текст по середине иконки, а не по её верхнему краю.
+            int textY = rowY + (ICON - font.lineHeight) / 2 + 1;
+            int nameX = columnX + ICON + 4;
+            String name = font.plainSubstrByWidth(material.name(),
+                    columnWidth - (ICON + 4) - 8 - countWidth);
+            graphics.text(font, name, nameX, textY, TEXT);
+            graphics.text(font, count, columnX + columnWidth - countWidth, textY, ACCENT);
         }
         graphics.disableScissor();
 
