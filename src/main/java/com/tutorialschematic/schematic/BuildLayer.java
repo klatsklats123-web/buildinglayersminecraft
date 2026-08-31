@@ -5,6 +5,8 @@ import com.tutorialschematic.order.OrderConfig;
 import com.tutorialschematic.order.OrderPresets;
 import com.tutorialschematic.order.Pos;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.state.BlockState;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -59,6 +61,20 @@ public class BuildLayer {
      */
     private int startDelayTicks;
     private int endDelayTicks;
+
+    /**
+     * Блок-заглушка, которым слой встаёт целиком в самом своём начале; пусто — не ставить.
+     *
+     * <p>Пока слой не построен, на его месте пустота, и в кадре это дыра: у пола сквозь неё
+     * видно, что под постройкой ничего нет. Заглушка закрывает всю площадь слоя разом, а
+     * дальше настоящие блоки заменяют её по шагам — форма слоя видна с первого кадра, и
+     * строится она уже поверх чего-то, а не в воздухе.
+     *
+     * <p>Хранится текстом в том же виде, что понимает {@code /setblock}, и разбирается
+     * только при постройке: незнакомый блок не должен мешать ни открыть схему, ни
+     * сохранить её.
+     */
+    private String placeholderBlock = "";
     /** Показывать ли слой в мире. Служебное состояние редактора, в файл не пишется. */
     private boolean visible = true;
 
@@ -119,6 +135,26 @@ public class BuildLayer {
 
     private static int clampDelay(int ticks) {
         return Math.max(0, Math.min(20 * 60, ticks));
+    }
+
+    /** Текст заглушки как его ввели; пустая строка — заглушки нет. */
+    public String placeholderBlock() {
+        return placeholderBlock;
+    }
+
+    public void setPlaceholderBlock(String text) {
+        this.placeholderBlock = text == null ? "" : text.trim();
+    }
+
+    /**
+     * Разобранная заглушка, либо {@code null}, если её нет или запись не понята.
+     *
+     * <p>Не понято — значит не ставим вовсе. Подставлять что-то своё тут нельзя: заглушка
+     * встаёт на всю площадь слоя, и ошибка в записи обернулась бы полом из чужого блока.
+     */
+    @Nullable
+    public BlockState placeholderState() {
+        return placeholderBlock.isEmpty() ? null : BlockData.tryParseState(placeholderBlock);
     }
 
 

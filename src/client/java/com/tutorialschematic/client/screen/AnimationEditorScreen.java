@@ -52,10 +52,12 @@ public class AnimationEditorScreen extends Screen {
     private EditBox ticksBox;
     private EditBox startDelayBox;
     private EditBox endDelayBox;
+    private EditBox placeholderBox;
 
     /** Подписи строки темпа. Держим одним списком: по ним же меряется ширина колонки. */
     private static final String[] TIMING_LABELS = {
-            "Блоков за шаг:", "Тиков на шаг:", "Задержка в начале:", "Задержка в конце:"
+            "Блоков за шаг:", "Тиков на шаг:", "Задержка в начале:", "Задержка в конце:",
+            "Заглушка слоя:"
     };
     private int timingLabelWidth;
     private int timingBoxX;
@@ -197,9 +199,8 @@ public class AnimationEditorScreen extends Screen {
             return;
         }
         OrderConfig order = layer.order();
-        // Полей стало четыре вместо трёх — строка начинается выше, иначе нижнее уходит
-        // под кнопки.
-        int rowY = contentY + contentHeight - 102;
+        // Полей стало пять — строка начинается выше, иначе нижнее уходит под кнопки.
+        int rowY = contentY + contentHeight - 126;
         int boxWidth = 42;
 
         // Колонку под подписи меряем шрифтом, а не подбираем на глаз: подписи тут разной
@@ -226,6 +227,15 @@ public class AnimationEditorScreen extends Screen {
                 layer.startDelayTicks(), layer::setStartDelayTicks);
         endDelayBox = numberBox(timingBoxX, rowY + 72, boxWidth,
                 layer.endDelayTicks(), layer::setEndDelayTicks);
+
+        // Заглушка — не про темп, но живёт здесь же: это тоже про то, что происходит в
+        // начале слоя. Поле шире остальных, туда вводят айди блока целиком.
+        placeholderBox = new EditBox(font, timingBoxX, rowY + 96, 110, 18, Component.literal("блок"));
+        placeholderBox.setMaxLength(200);
+        placeholderBox.setValue(layer.placeholderBlock());
+        placeholderBox.setHint(Component.literal("например dirt — пусто значит не ставить"));
+        placeholderBox.setResponder(layer::setPlaceholderBlock);
+        addRenderableWidget(placeholderBox);
 
         // Кнопка рядом с размером пачки, потому что она его и отменяет: включённая
         // резка по фронту делает число блоков за шаг переменным.
@@ -466,7 +476,7 @@ public class AnimationEditorScreen extends Screen {
             return;
         }
         OrderConfig order = layer.order();
-        int rowY = contentY + contentHeight - 102;
+        int rowY = contentY + contentHeight - 126;
 
         for (int i = 0; i < TIMING_LABELS.length; i++) {
             graphics.text(font, TIMING_LABELS[i], midX + 6, rowY + 5 + i * 24, TEXT);
@@ -479,6 +489,18 @@ public class AnimationEditorScreen extends Screen {
         graphics.text(font, String.format("%.1f бл/с", order.blocksPerSecond()), hintX, rowY + 29, TEXT_DIM);
         graphics.text(font, seconds(layer.startDelayTicks()), hintX, rowY + 53, TEXT_DIM);
         graphics.text(font, seconds(layer.endDelayTicks()), hintX, rowY + 77, TEXT_DIM);
+
+        // У заглушки вместо числа — понял ли мод, что за блок ввели. Ошибку надо видеть
+        // сразу: заглушка встаёт на весь слой, и молча не поставить её будет непонятно.
+        String text = layer.placeholderBlock();
+        if (text.isEmpty()) {
+            graphics.text(font, "не ставить", timingBoxX + 116, rowY + 101, TEXT_DIM);
+        } else if (layer.placeholderState() == null) {
+            graphics.text(font, "✕ такого блока нет", timingBoxX + 116, rowY + 101, ERROR);
+        } else {
+            graphics.text(font, layer.placeholderState().getBlock().getName().getString(),
+                    timingBoxX + 116, rowY + 101, ACCENT);
+        }
     }
 
     /** Тики в секундах: в игре двадцать тиков в секунде. */

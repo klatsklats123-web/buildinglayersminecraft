@@ -133,6 +133,9 @@ public final class SchematicFiles {
             layerJson.addProperty("color", layer.color());
             layerJson.addProperty("startDelayTicks", layer.startDelayTicks());
             layerJson.addProperty("endDelayTicks", layer.endDelayTicks());
+            if (!layer.placeholderBlock().isEmpty()) {
+                layerJson.addProperty("placeholderBlock", layer.placeholderBlock());
+            }
             layerJson.add("order", layer.order().toJson());
 
             JsonArray blocksJson = new JsonArray();
@@ -297,6 +300,7 @@ public final class SchematicFiles {
             if (layerJson.has("endDelayTicks")) layer.setEndDelayTicks(layerJson.get("endDelayTicks").getAsInt());
             // Схемы, сохранённые до разделения на две задержки: прежняя пауза была «после слоя».
             if (layerJson.has("pauseAfterTicks")) layer.setEndDelayTicks(layerJson.get("pauseAfterTicks").getAsInt());
+            if (layerJson.has("placeholderBlock")) layer.setPlaceholderBlock(layerJson.get("placeholderBlock").getAsString());
             if (layerJson.has("order")) layer.setOrder(OrderConfig.fromJson(layerJson.getAsJsonObject("order")));
 
             Map<String, String> nbtByPos = new HashMap<>();

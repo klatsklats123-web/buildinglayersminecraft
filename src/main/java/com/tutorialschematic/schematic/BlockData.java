@@ -45,11 +45,29 @@ public record BlockData(BlockState state, @Nullable CompoundTag nbt) {
      * не должен рушить загрузку всей схемы, поэтому подставляется камень и пишется в лог.
      */
     public static BlockState parseState(String text) {
-        try {
-            return BlockStateParser.parseForBlock(BuiltInRegistries.BLOCK, text, false).blockState();
-        } catch (Exception e) {
-            TutorialSchematicMod.LOGGER.warn("Не удалось прочитать состояние блока '{}': {}", text, e.getMessage());
+        BlockState state = tryParseState(text);
+        if (state == null) {
+            TutorialSchematicMod.LOGGER.warn("Не удалось прочитать состояние блока '{}'", text);
             return Blocks.STONE.defaultBlockState();
+        }
+        return state;
+    }
+
+    /**
+     * То же, но без подстановки камня: {@code null} означает «запись не понята».
+     *
+     * <p>Нужно там, где выбор блока делает игрок и ошибку надо показать ему, а не молча
+     * подменить блок на другой.
+     */
+    @Nullable
+    public static BlockState tryParseState(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        try {
+            return BlockStateParser.parseForBlock(BuiltInRegistries.BLOCK, text.trim(), false).blockState();
+        } catch (Exception e) {
+            return null;
         }
     }
 
